@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "A from-scratch language model project with modular runtime and skills"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "regex",
+  "torch",
+]
+
+[project.scripts]
+jarvis = "jarvis.runtime.jarvis:main"
+
+[tool.setuptools]
+packages = ["jarvis", "jarvis.core", "jarvis.modules", "jarvis.runtime"]

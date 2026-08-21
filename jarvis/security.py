@@ -1,0 +1,255 @@
+"""
+security.py — the verification gate for anything risky: shutdown today, and
+the hook point for self-modification / OS-level actions once those exist
+(call SecurityGate.authorize("reason") before doing the risky thing; proceed
+only if it returns True).
+
+Two independent factors, both required when both are enrolled:
+  1. something you know — a passphrase. The plaintext is never written to
+     disk. Only a salted PBKDF2 hash of a *normalized* form of it is stored;
+     verification re-normalizes and re-hashes the attempt and compares
+     digests. There is no way to recover the passphrase from what's on disk.
+  2. something you are — a voiceprint. An embedding vector extracted from
+     enrolled audio with a pretrained speaker-verification model (ECAPA-TDNN
+     via speechbrain, running locally). The embedding is a fingerprint for
+     "does this voice match the one that enrolled" — it cannot be turned back
+     into audio, and it has nothing to do with the passphrase's contents.
+
+Everything runs locally; no network call at verification time (speechbrain
+downloads its pretrained model once, from Hugging Face, then caches it).
+
+Two enrollment paths, matching the two ways authorize() can later be asked
+for the passphrase:
+  - typed  (python -m jarvis.security enroll):
+        console session, getpass hides the input, no mic involved.
+  - spoken (python -m jarvis.security enroll --voice):
+        you speak the passphrase once; that recording is transcribed for the
+        passphrase hash *and* embedded for the voiceprint. Required if JARVIS
+        will ever authorize() with no keyboard attached — e.g. the background
+        launcher — since authorize() there speaks the prompt and listens
+        instead of calling getpass(), which would just hang with no stdin.
+        Enrolling by voice keeps enrollment and verification in the same
+        modality, which matters: transcribing a *typed* phrase back from
+        speech later is not guaranteed to reproduce the exact same text.
+        Pick something short and phonetically distinctive — plain, unusual
+        words transcribe more reliably than sentences full of similar-
+        sounding ones.
+"""
+
+from __future__ import annotations
+import getpass
+import hashlib
+import hmac
+import os
+import re
+
+import numpy as np
+
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+_SEC_DIR = os.path.join(_PKG_DIR, "data", "security")
+_PASS_HASH_PATH = os.path.join(_SEC_DIR, "passphrase.hash")
+_SALT_PATH = os.path.join(_SEC_DIR, "passphrase.salt")
+_VOICEPRINT_PATH = os.path.join(_SEC_DIR, "voiceprint.npy")
+
+_PBKDF2_ITERATIONS = 260_000
+VOICE_MATCH_THRESHOLD = 0.55  # cosine similarity; biased toward rejecting impostors over convenience
+_MIN_AUDIO_SAMPLES = 8000     # ~0.5s at 16kHz — below this, treat as "didn't catch anything"
+
+
+def _normalize(text: str) -> str:
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s]", "", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def _hash_passphrase(passphrase: str, salt: bytes) -> bytes:
+    normalized = _normalize(passphrase)
+    return hashlib.pbkdf2_hmac("sha256", normalized.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+
+
+def is_enrolled() -> bool:
+    return os.path.exists(_PASS_HASH_PATH) and os.path.exists(_SALT_PATH)
+
+
+def has_voiceprint() -> bool:
+    return os.path.exists(_VOICEPRINT_PATH)
+
+
+_verifier = None  # lazy-loaded speechbrain model, shared across calls in this process
+
+
+def _get_verifier():
+    global _verifier
+    if _verifier is None:
+        from speechbrain.inference.speaker import SpeakerRecognition
+        from speechbrain.utils.fetching import LocalStrategy
+        # Windows needs Developer Mode or admin to create symlinks; COPY
+        # avoids that requirement (costs a bit of extra disk, not speed —
+        # this only runs once, the model is cached after).
+        _verifier = SpeakerRecognition.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            savedir=os.path.join(_SEC_DIR, "_speechbrain_cache"),
+            local_strategy=LocalStrategy.COPY,
+        )
+    return _verifier
+
+
+def _embed(audio: np.ndarray) -> np.ndarray:
+    import torch
+    model = _get_verifier()
+    wav = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
+    with torch.no_grad():
+        emb = model.encode_batch(wav)
+    return emb.squeeze().cpu().numpy()
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
+
+
+def enroll(passphrase: str | None = None, voice_audio: np.ndarray | None = None,
+           transcribe_fn=None) -> None:
+    """One-time setup. Overwrites any prior enrollment.
+
+    If voice_audio is given, the passphrase is taken from what's spoken in
+    it (via transcribe_fn) instead of typed — see the module docstring for
+    why that matters. transcribe_fn: callable(audio) -> str | None, required
+    together with voice_audio.
+    """
+    os.makedirs(_SEC_DIR, exist_ok=True)
+
+    if voice_audio is not None:
+        if transcribe_fn is None:
+            raise ValueError("transcribe_fn is required to enroll a spoken passphrase")
+        passphrase = transcribe_fn(voice_audio)
+        if not passphrase:
+            raise ValueError("couldn't transcribe anything from the recording")
+        print(f'[security] heard: "{passphrase}" — say this back to verify later.')
+    elif passphrase is None:
+        passphrase = getpass.getpass("Set the verification passphrase (input hidden): ")
+
+    if not passphrase or not _normalize(passphrase):
+        raise ValueError("passphrase cannot be empty")
+
+    salt = os.urandom(16)
+    digest = _hash_passphrase(passphrase, salt)
+    with open(_SALT_PATH, "wb") as f:
+        f.write(salt)
+    with open(_PASS_HASH_PATH, "wb") as f:
+        f.write(digest)
+    print("[security] passphrase stored as a salted hash — the passphrase itself was not saved.")
+
+    if voice_audio is not None:
+        np.save(_VOICEPRINT_PATH, _embed(voice_audio))
+        print("[security] voiceprint enrolled from the same recording.")
+
+
+class SecurityGate:
+    """Call authorize(reason) before anything irreversible or risky.
+    Returns True only if every enrolled factor passes."""
+
+    def __init__(self, mic_engine=None, tts_engine=None):
+        # mic_engine: something with record_until_silence() -> mono float32
+        # audio at 16kHz AND transcribe(audio) -> str|None (WhisperSTTEngine
+        # satisfies this). When present, the passphrase is captured by
+        # listening instead of getpass() — required for any headless/
+        # background run, where there is no stdin to read a typed answer
+        # from. tts_engine: anything with speak(text) — used to voice the
+        # prompts/results when present; purely a UX nicety, verification
+        # logic doesn't depend on it.
+        self.mic_engine = mic_engine
+        self.tts_engine = tts_engine
+
+    def _say(self, text: str) -> None:
+        print(f"[security] {text}")
+        if self.tts_engine is not None:
+            self.tts_engine.speak(text)
+
+    def _check_passphrase(self, attempt: str) -> bool:
+        with open(_SALT_PATH, "rb") as f:
+            salt = f.read()
+        with open(_PASS_HASH_PATH, "rb") as f:
+            expected = f.read()
+        return hmac.compare_digest(_hash_passphrase(attempt, salt), expected)
+
+    def authorize(self, reason: str) -> bool:
+        if not is_enrolled():
+            self._say(f"'{reason}' requires verification, but nothing is enrolled yet. "
+                       f"Run: python -m jarvis.security enroll")
+            return False
+
+        voice_mode = self.mic_engine is not None and hasattr(self.mic_engine, "transcribe")
+        audio = None
+
+        if voice_mode:
+            self._say(f"Verification required for {reason}. Please say your passphrase.")
+            audio = self.mic_engine.record_until_silence()
+            if audio.size < _MIN_AUDIO_SAMPLES:
+                self._say("Denied — didn't catch anything.")
+                return False
+            spoken = self.mic_engine.transcribe(audio)
+            if not spoken:
+                self._say("Denied — couldn't understand that.")
+                return False
+            passed = self._check_passphrase(spoken)
+        else:
+            print(f"[security] verification required for: {reason}")
+            passed = self._check_passphrase(getpass.getpass("Passphrase: "))
+
+        if not passed:
+            self._say("Denied — passphrase did not match.")
+            return False
+
+        if has_voiceprint():
+            if audio is None and self.mic_engine is not None:
+                self._say("Now say something so I can check your voice.")
+                audio = self.mic_engine.record_until_silence()
+            if audio is None or audio.size < _MIN_AUDIO_SAMPLES:
+                if self.mic_engine is not None:
+                    self._say("Denied — didn't catch your voice for the biometric check.")
+                    return False
+                # no mic available at all (console-only session): voice
+                # factor is silently skipped, same as when nothing is
+                # enrolled for it — passphrase alone stands.
+            else:
+                score = _cosine(np.load(_VOICEPRINT_PATH), _embed(audio))
+                if score < VOICE_MATCH_THRESHOLD:
+                    self._say(f"Denied — voice did not match (score={score:.2f}).")
+                    return False
+                print(f"[security] voice matched (score={score:.2f}).")
+
+        self._say("Verified.")
+        return True
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="JARVIS security enrollment")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    enroll_p = sub.add_parser("enroll", help="set the passphrase and (optionally) a voiceprint")
+    enroll_p.add_argument(
+        "--voice", action="store_true",
+        help="enroll by speaking your passphrase once — required if you'll ever run "
+             "JARVIS with --voice (especially the background launcher, which has no "
+             "keyboard to type into); that same recording also sets your voiceprint.")
+    enroll_p.add_argument("--whisper-model", default="base.en")
+    args = ap.parse_args()
+
+    if args.cmd == "enroll":
+        if args.voice:
+            try:
+                from jarvis.modules.voice import WhisperSTTEngine
+            except ImportError:  # pragma: no cover - legacy direct execution
+                from modules.voice import WhisperSTTEngine
+            print("[security] loading whisper...")
+            engine = WhisperSTTEngine(model_size=args.whisper_model)
+            print("[security] speak your passphrase now, then go quiet. Pick something short "
+                  "and phonetically distinctive.")
+            audio = engine.record_until_silence()
+            enroll(voice_audio=audio, transcribe_fn=engine.transcribe)
+        else:
+            enroll()
+
+
+if __name__ == "__main__":
+    main()

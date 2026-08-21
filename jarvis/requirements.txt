@@ -1,0 +1,5 @@
+torch>=2.0
+numpy
+regex
+requests
+beautifulsoup4
