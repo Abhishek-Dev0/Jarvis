@@ -312,10 +312,10 @@ def main():
     ap.add_argument("--whisper-device", default=None,
                     help="cuda or cpu for faster-whisper — falls back to cpu automatically "
                          "if cuda isn't actually available. Default: auto-picked, see modules/hardware.py")
-    ap.add_argument("--reasoning-model", default="qwen2.5:3b",
-                    help="Ollama model for real conversation/knowledge (sized to fit this "
-                         "machine's 4GB VRAM — a bigger model will just be slow, not smarter "
-                         "in a way that's worth the wait; see modules/reasoning.py). "
+    ap.add_argument("--reasoning-model", default=None,
+                    help="Ollama model for real conversation/knowledge. "
+                         "Default: auto-picked biggest-that-fits from detected RAM/VRAM, "
+                         "see modules/hardware.py's recommend_reasoning_model(). "
                          "Skipped automatically if Ollama isn't running.")
     ap.add_argument("--no-reasoning", action="store_true",
                     help="disable the Ollama reasoning module — fall back to skills + the raw core model")
@@ -372,7 +372,12 @@ def main():
     if not args.no_os_control:
         j.register(OSControlSkill(security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin))
     if not args.no_reasoning:
-        j.register(ReasoningSkill(model=args.reasoning_model, history_ref=lambda: j.history))
+        reasoning_model = args.reasoning_model
+        if reasoning_model is None:
+            from jarvis.modules import hardware
+            reasoning_model = hardware.recommend_reasoning_model()
+            print(f"[jarvis] auto-sized reasoning model for this machine: {reasoning_model}")
+        j.register(ReasoningSkill(model=reasoning_model, history_ref=lambda: j.history))
     j.run()
 
 

@@ -57,6 +57,23 @@ class ReasoningSkill(SkillModule):
                 self._available = False
         return self._available
 
+    def setup(self):
+        # Best-effort friendliness check, not a hard requirement: warn if the
+        # hardware-recommended (or explicitly requested) model tag hasn't
+        # actually been pulled yet, so a bad first run says why instead of
+        # just failing inside handle()'s except block later.
+        if not self.available:
+            return
+        try:
+            import requests
+            resp = requests.get(f"{self.host}/api/tags", timeout=3)
+            resp.raise_for_status()
+            pulled = {m.get("name") for m in resp.json().get("models", [])}
+            if self.model not in pulled:
+                print(f"[reasoning] '{self.model}' isn't pulled yet — run: ollama pull {self.model}")
+        except Exception:
+            pass
+
     def matches(self, text):
         return True
 
