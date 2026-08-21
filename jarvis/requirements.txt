@@ -4,3 +4,4 @@ regex
 requests
 beautifulsoup4
 psutil
+pyserial

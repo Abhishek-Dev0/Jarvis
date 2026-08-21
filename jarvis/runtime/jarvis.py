@@ -21,6 +21,7 @@ try:
     from jarvis.modules.web import WebSearchSkill, WebGrowthSkill
     from jarvis.modules.reasoning import ReasoningSkill
     from jarvis.modules.os_control import OSControlSkill
+    from jarvis.modules.hardware_io import HardwareSkill
     from jarvis.security import SecurityGate
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.web import WebSearchSkill, WebGrowthSkill
     from modules.reasoning import ReasoningSkill
     from modules.os_control import OSControlSkill
+    from modules.hardware_io import HardwareSkill
     from security import SecurityGate
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
@@ -323,6 +325,13 @@ def main():
                     help="disable OS-agentic control (open/close/list applications) — "
                          "every state-changing action is security-gated regardless, "
                          "this just removes the capability entirely")
+    ap.add_argument("--no-hardware", action="store_true",
+                    help="disable the serial/Arduino hardware skill (list/connect/send/read) — "
+                         "connecting and sending are security-gated regardless; this just "
+                         "removes the capability entirely. Silently unavailable anyway if "
+                         "pyserial isn't installed.")
+    ap.add_argument("--hardware-baud", type=int, default=115200,
+                    help="baud rate for serial connections opened via the hardware skill")
     args = ap.parse_args()
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
@@ -371,6 +380,9 @@ def main():
     j.register(WebGrowthSkill(data_dir=os.path.join(_PKG_DIR, "data", "web")))
     if not args.no_os_control:
         j.register(OSControlSkill(security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin))
+    if not args.no_hardware:
+        j.register(HardwareSkill(security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin,
+                                  baud=args.hardware_baud))
     if not args.no_reasoning:
         reasoning_model = args.reasoning_model
         if reasoning_model is None:
