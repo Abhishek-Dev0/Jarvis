@@ -30,12 +30,24 @@ except ImportError:  # pragma: no cover - legacy direct execution
 # Phrases that mean "stop the process." Handled in run() itself (gated by
 # SecurityGate) rather than by input modules swallowing them, so verification
 # can't be bypassed by whichever module happens to read the phrase first.
-_SHUTDOWN_PHRASES = {"quit", "exit", "shutdown", "shut down", "power off",
-                      "turn off", "stop jarvis", "goodbye jarvis"}
+# English is the always-available baseline; Jarvis.refresh_multilingual_phrases()
+# extends both sets into every language in voice.SUPPORTED_LANGUAGES when a
+# Translator is available (see main()), so "quit"/"yes" work no matter what
+# language the conversation is actually happening in.
+_SHUTDOWN_PHRASES_EN = {"quit", "exit", "shutdown", "shut down", "power off",
+                         "turn off", "stop jarvis", "goodbye jarvis"}
+_AFFIRMATIVE_PHRASES_EN = {"yes", "yeah", "yep", "yup", "correct", "affirmative"}
 
 
-def _is_shutdown_request(text: str) -> bool:
-    return text.strip().lower().rstrip(".!? ") in _SHUTDOWN_PHRASES
+def _normalize_phrase(text: str) -> str:
+    import re
+    text = text.strip().lower()
+    text = re.sub(r"[^\w\s]", "", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def _is_shutdown_request(text: str, phrases: set[str]) -> bool:
+    return _normalize_phrase(text) in phrases
 
 # Same fix as ConsoleOutput.setup() (modules/builtin.py), applied here too:
 # diagnostics printed before any module registers — e.g. load_model()'s
@@ -57,7 +69,8 @@ _PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Jarvis:
     def __init__(self, ckpt="checkpoints/best.pt", tokenizer="data/tokenizer.json",
-                 device="auto", max_history=6, gen_kwargs=None, chat_mode=False):
+                 device="auto", max_history=6, gen_kwargs=None, chat_mode=False,
+                 admin_name="admin"):
         self.registry = Registry()
         self.history: list[tuple[str, str]] = []
         self.max_history = max_history
@@ -82,6 +95,36 @@ class Jarvis:
         # no translator, non-English input/output just isn't bridged; the
         # core model only understands English regardless.
         self.translator = None
+        # Session-level admin state (see security.SecurityGate.wake_challenge
+        # and run()) — in memory only, resets every process restart. Whoever
+        # this session belongs to, by name, for the "are you the admin, X?"
+        # wake challenge.
+        self.admin_name = admin_name
+        self.is_admin = False
+        self.shutdown_phrases = set(_SHUTDOWN_PHRASES_EN)
+        self.affirmative_phrases = set(_AFFIRMATIVE_PHRASES_EN)
+
+    def refresh_multilingual_phrases(self) -> None:
+        """Extends shutdown/affirmative phrase matching into every supported
+        language via self.translator. Safe to call with no translator (no-op)
+        or call again later if the translator becomes available."""
+        if self.translator is None:
+            return
+        try:
+            from jarvis.modules.voice import SUPPORTED_LANGUAGES
+        except ImportError:  # pragma: no cover - legacy direct execution
+            from modules.voice import SUPPORTED_LANGUAGES
+        for lang in SUPPORTED_LANGUAGES:
+            if lang == "en":
+                continue
+            for phrase in _SHUTDOWN_PHRASES_EN:
+                translated = self.translator.translate(phrase, "en", lang)
+                if translated:
+                    self.shutdown_phrases.add(_normalize_phrase(translated))
+            for phrase in _AFFIRMATIVE_PHRASES_EN:
+                translated = self.translator.translate(phrase, "en", lang)
+                if translated:
+                    self.affirmative_phrases.add(_normalize_phrase(translated))
 
     # ------------------------------------------------------------------ setup
 
@@ -180,6 +223,14 @@ class Jarvis:
         print(self.registry.summary())
         print("=" * 60)
 
+        # Once, at session start: if the first thing heard matches the
+        # enrolled voiceprint, offer the admin login. Silent no-op if no mic,
+        # nothing enrolled, or the voice doesn't match — see
+        # SecurityGate.wake_challenge's docstring for why that matters.
+        if self.security.wake_challenge(self.admin_name, self.affirmative_phrases):
+            self.is_admin = True
+            self.security._say("Administrator access granted.")
+
         try:
             while True:
                 text = source.listen()
@@ -195,11 +246,10 @@ class Jarvis:
                 self._set_output_lang(lang)
                 translate = lang != "en" and self.translator is not None
 
-                # Shutdown phrases are only matched in English right now —
-                # a real gap for non-English voice sessions, not yet solved.
-                if _is_shutdown_request(text):
-                    if self.security.authorize("shut down JARVIS"):
-                        self.registry.emit_all("Verified. Shutting down.")
+                if _is_shutdown_request(text, self.shutdown_phrases):
+                    # Already proved identity this session -> don't ask again.
+                    if self.is_admin or self.security.authorize("shut down JARVIS"):
+                        self.registry.emit_all("Shutting down.")
                         break
                     self.registry.emit_all("Verification failed — staying online.")
                     continue
@@ -243,27 +293,47 @@ def main():
     ap.add_argument("--voice", action="store_true",
                     help="microphone input + spoken output, fully local "
                          "(faster-whisper STT, Kokoro/Piper TTS) — no API key, no cost")
-    ap.add_argument("--whisper-model", default="small",
+    ap.add_argument("--whisper-model", default=None,
                     help="faster-whisper model size — multilingual unless "
                          "suffixed .en (tiny/base/small/medium/large-v3, or "
-                         "tiny.en/base.en/... for English-only + faster)")
+                         "tiny.en/base.en/... for English-only + faster). "
+                         "Default: auto-picked from detected RAM/VRAM, see modules/hardware.py")
     ap.add_argument("--persona", default="jarvis", choices=["jarvis", "eve"],
                     help="voice identity: jarvis (male) or eve (female)")
     ap.add_argument("--lang", default="en",
-                    help="default spoken language (en/ja/es/fr/ru/ko) — used until "
-                         "Whisper detects something else in what you actually say")
+                    help="default spoken language (en/ja/es/fr/ru/ko/zh/hi/pt/ar/bn) — "
+                         "used until Whisper detects something else in what you actually say")
+    ap.add_argument("--admin-name", default="Abhishek",
+                    help="name JARVIS uses in the wake-time \"are you the admin, X?\" challenge")
+    ap.add_argument("--whisper-device", default=None,
+                    help="cuda or cpu for faster-whisper — falls back to cpu automatically "
+                         "if cuda isn't actually available. Default: auto-picked, see modules/hardware.py")
     args = ap.parse_args()
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
-               chat_mode=args.chat_mode)
+               chat_mode=args.chat_mode, admin_name=args.admin_name)
     j.gen_kwargs["temperature"] = args.temperature
     j.load_model()
 
     if args.voice:
         from jarvis.modules.voice import WhisperSTTEngine, PersonaTTSEngine
-        print(f"[jarvis] loading voice engines (whisper={args.whisper_model}, "
+        whisper_model, whisper_device = args.whisper_model, args.whisper_device
+        if whisper_model is None or whisper_device is None:
+            from jarvis.modules import hardware
+            auto_model, auto_device = hardware.recommend_whisper()
+            whisper_model = whisper_model or auto_model
+            whisper_device = whisper_device or auto_device
+            print(f"[jarvis] auto-sized whisper for this machine: "
+                  f"model={whisper_model} device={whisper_device}")
+        print(f"[jarvis] loading voice engines (whisper={whisper_model}/{whisper_device}, "
               f"persona={args.persona}, default lang={args.lang})...")
-        whisper_engine = WhisperSTTEngine(model_size=args.whisper_model)
+        try:
+            whisper_engine = WhisperSTTEngine(model_size=whisper_model,
+                                               device=whisper_device,
+                                               compute_type="float16" if whisper_device == "cuda" else "int8")
+        except Exception as e:
+            print(f"[jarvis] whisper on {whisper_device} failed ({e}), falling back to cpu")
+            whisper_engine = WhisperSTTEngine(model_size=whisper_model, device="cpu")
         persona_engine = PersonaTTSEngine(persona=args.persona, default_lang=args.lang)
         j.register(SpeechInput(engine=whisper_engine))
         j.register(SpeechOutput(engine=persona_engine))
@@ -274,6 +344,7 @@ def main():
         try:
             from jarvis.modules.translate import Translator
             j.translator = Translator()
+            j.refresh_multilingual_phrases()
         except Exception as e:
             print(f"[jarvis] translation unavailable ({e}) — non-English speech "
                   f"will be transcribed but not bridged to the (English-only) model")

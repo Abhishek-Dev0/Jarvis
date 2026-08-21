@@ -29,3 +29,6 @@ jarvis/data/logs/
 
 # editor
 .vscode/
+
+# portable gh CLI (downloaded locally to set up the GitHub remote, not part of the project)
+.tools/

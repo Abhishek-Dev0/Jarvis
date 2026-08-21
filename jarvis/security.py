@@ -75,6 +75,62 @@ def has_voiceprint() -> bool:
     return os.path.exists(_VOICEPRINT_PATH)
 
 
+def _patch_speechbrain_windows_lazy_import_bug() -> None:
+    """speechbrain.utils.importutils.LazyModule.ensure_module guards against
+    PyTorch's op-registration machinery incidentally triggering an unwanted
+    lazy import of an optional speechbrain dependency (e.g.
+    speechbrain.integrations.k2_fsa, which isn't installed here and isn't
+    used by anything in this file) — its own docstring explains exactly
+    this. The guard checks `importer_frame.filename.endswith("/inspect.py")`
+    to detect "this is inspect.py walking the stack, not real code asking
+    for this module" and raise AttributeError instead of a hard ImportError.
+    That check assumes a forward slash, so it never matches on Windows,
+    where inspect.py's path uses backslashes — confirmed by reading
+    speechbrain 1.1.0's source directly. Left unpatched: the very first time
+    anything (e.g. Argos Translate's first real translate() call, if it
+    happens after speechbrain has been imported) triggers PyTorch to
+    register a custom op, that walk hits the lazy module, gets a real
+    ImportError instead of AttributeError, and crashes code that was just
+    doing a plain hasattr() check — which Translator.translate() then
+    silently swallows and falls back to returning untranslated text.
+    Reimplements the same method with a platform-safe basename check;
+    everything else is unchanged from the original.
+    """
+    try:
+        import inspect as _inspect
+        import os as _os
+        import sys as _sys
+        import warnings as _warnings
+        from speechbrain.utils import importutils
+
+        def ensure_module(self, stacklevel):
+            importer_frame = None
+            try:
+                importer_frame = _inspect.getframeinfo(_sys._getframe(stacklevel + 1))
+            except AttributeError:
+                _warnings.warn(
+                    "Failed to inspect frame to check if we should ignore "
+                    "importing a module lazily.")
+            if importer_frame is not None and _os.path.basename(importer_frame.filename) == "inspect.py":
+                raise AttributeError()
+            if self.lazy_module is None:
+                try:
+                    if self.package is None:
+                        self.lazy_module = importutils.importlib.import_module(self.target)
+                    else:
+                        self.lazy_module = importutils.importlib.import_module(
+                            f".{self.target}", self.package)
+                except Exception as e:
+                    raise ImportError(f"Lazy import of {self!r} failed") from e
+            return self.lazy_module
+
+        importutils.LazyModule.ensure_module = ensure_module
+    except Exception as e:
+        print(f"[security] couldn't apply the speechbrain Windows lazy-import patch ({e}); "
+              f"translation may silently no-op if it runs after voice verification in "
+              f"the same process")
+
+
 _verifier = None  # lazy-loaded speechbrain model, shared across calls in this process
 
 
@@ -83,6 +139,7 @@ def _get_verifier():
     if _verifier is None:
         from speechbrain.inference.speaker import SpeakerRecognition
         from speechbrain.utils.fetching import LocalStrategy
+        _patch_speechbrain_windows_lazy_import_bug()
         # Windows needs Developer Mode or admin to create symlinks; COPY
         # avoids that requirement (costs a bit of extra disk, not speed —
         # this only runs once, the model is cached after).
@@ -171,6 +228,43 @@ class SecurityGate:
         with open(_PASS_HASH_PATH, "rb") as f:
             expected = f.read()
         return hmac.compare_digest(_hash_passphrase(attempt, salt), expected)
+
+    def wake_challenge(self, admin_name: str, affirmative_phrases=None) -> bool:
+        """Called once at voice-session start. If the very first thing heard
+        matches the enrolled voiceprint, asks "<admin_name>, are you the
+        admin?" and on a yes, runs the normal authorize() passphrase+voice
+        check. Returns True only on a full successful admin login.
+
+        Silent (no prompt spoken, no trace in output beyond the [security]
+        log line) if the voice doesn't match or nothing is enrolled — a
+        stranger talking to JARVIS never learns an admin gate exists at all.
+
+        affirmative_phrases: optional set of normalized "yes"-equivalent
+        strings to check the reply against (see runtime/jarvis.py, which
+        builds one via Translator so this works in whatever language was
+        just detected); falls back to a small English-only set.
+        """
+        if self.mic_engine is None or not is_enrolled() or not has_voiceprint():
+            return False
+
+        audio = self.mic_engine.record_until_silence()
+        if audio.size < _MIN_AUDIO_SAMPLES:
+            return False
+        score = _cosine(np.load(_VOICEPRINT_PATH), _embed(audio))
+        if score < VOICE_MATCH_THRESHOLD:
+            return False  # not the enrolled voice — say nothing, proceed as a normal session
+
+        self._say(f"Are you the admin, {admin_name}?")
+        reply_audio = self.mic_engine.record_until_silence()
+        if reply_audio.size < _MIN_AUDIO_SAMPLES:
+            return False
+        reply_text = self.mic_engine.transcribe(reply_audio) or ""
+        affirmatives = affirmative_phrases or {"yes", "yeah", "yep", "correct", "affirmative", "yup"}
+        if _normalize(reply_text) not in affirmatives:
+            self._say("Understood — continuing as a regular user.")
+            return False
+
+        return self.authorize("become admin")
 
     def authorize(self, reason: str) -> bool:
         if not is_enrolled():

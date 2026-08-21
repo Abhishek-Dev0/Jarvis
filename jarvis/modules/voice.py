@@ -127,23 +127,29 @@ class KokoroTTSEngine:
 
 class PiperTTSEngine:
     """Synthesizes speech with Piper (ONNX, local weights) for languages
-    Kokoro doesn't cover (Russian, Korean) plus the French male voice Kokoro
-    lacks (Kokoro only ships a French female voice, ff_siwis).
+    Kokoro doesn't cover (Russian, Korean, Arabic, Bengali) plus the French
+    male voice Kokoro lacks (Kokoro's French is female-only, ff_siwis).
+
+    speaker_id selects a voice within a multi-speaker model (only the
+    Bengali "google" voice is multi-speaker here, 16 speakers bundled in one
+    file) — ignored by single-speaker models.
     """
 
-    def __init__(self, model_file):
+    def __init__(self, model_file, speaker_id: int | None = None):
         from piper import PiperVoice
+        from piper.config import SynthesisConfig
         model_path = os.path.join(_MODELS_DIR, "piper", model_file)
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Piper voice missing — expected {model_path}")
         self.voice = PiperVoice.load(model_path)
+        self.syn_config = SynthesisConfig(speaker_id=speaker_id) if speaker_id is not None else None
 
     def speak(self, text: str, lang: str | None = None) -> None:
         text = text.strip()
         if not text:
             return
         import sounddevice as sd
-        chunks = list(self.voice.synthesize(text))
+        chunks = list(self.voice.synthesize(text, syn_config=self.syn_config))
         if not chunks:
             return
         audio = np.concatenate([c.audio_float_array for c in chunks])
@@ -152,10 +158,16 @@ class PiperTTSEngine:
 
 
 # language -> {"jarvis": <selector>, "eve": <selector>}, selector being
-# "kokoro:<voice_id>:<kokoro_lang_code>" or "piper:<model_filename>". Only
-# languages with actual voice weights on disk (jarvis/data/models/{kokoro,piper}/)
-# are listed. Korean has only one public Piper voice (kss); both personas
-# share it rather than pretending a male Korean voice exists.
+# "kokoro:<voice_id>:<kokoro_lang_code>" or "piper:<model_filename>[:speaker_id]".
+# Only languages with actual voice weights on disk
+# (jarvis/data/models/{kokoro,piper}/) are listed.
+#
+# Known single-voice gaps, shared by both personas rather than pretending a
+# second voice exists: Korean (only public Piper voice: kss), Arabic (only
+# public Piper voice: kareem). Bengali's Piper voice is multi-speaker (16
+# speakers in one model) — speaker ids 0 and 1 are used to give jarvis/eve
+# distinct voices, but their actual gender wasn't verified by ear, only that
+# they're different from each other.
 _VOICE_TABLE = {
     "en": {"jarvis": "kokoro:am_michael:en-us", "eve": "kokoro:af_heart:en-us"},
     "ja": {"jarvis": "kokoro:jm_kumo:ja",        "eve": "kokoro:jf_alpha:ja"},
@@ -163,6 +175,11 @@ _VOICE_TABLE = {
     "fr": {"jarvis": "piper:fr_FR-tom-medium.onnx", "eve": "kokoro:ff_siwis:fr-fr"},
     "ru": {"jarvis": "piper:ru_RU-dmitri-medium.onnx", "eve": "piper:ru_RU-irina-medium.onnx"},
     "ko": {"jarvis": "piper:ko_KR-kss-medium.onnx", "eve": "piper:ko_KR-kss-medium.onnx"},
+    "zh": {"jarvis": "kokoro:zm_yunjian:cmn",    "eve": "kokoro:zf_xiaoxiao:cmn"},
+    "hi": {"jarvis": "kokoro:hm_omega:hi",       "eve": "kokoro:hf_alpha:hi"},
+    "pt": {"jarvis": "kokoro:pm_alex:pt-br",     "eve": "kokoro:pf_dora:pt-br"},
+    "ar": {"jarvis": "piper:ar_JO-kareem-medium.onnx", "eve": "piper:ar_JO-kareem-medium.onnx"},
+    "bn": {"jarvis": "piper:bn_BD-google-medium.onnx:0", "eve": "piper:bn_BD-google-medium.onnx:1"},
 }
 SUPPORTED_LANGUAGES = tuple(_VOICE_TABLE)
 
@@ -190,7 +207,10 @@ class PersonaTTSEngine:
             voice_id, lang_code = rest.split(":")
             engine = KokoroTTSEngine(voice=voice_id, lang=lang_code)
         elif kind == "piper":
-            engine = PiperTTSEngine(model_file=rest)
+            parts = rest.split(":")
+            model_file = parts[0]
+            speaker_id = int(parts[1]) if len(parts) > 1 else None
+            engine = PiperTTSEngine(model_file=model_file, speaker_id=speaker_id)
         else:
             raise ValueError(f"unknown TTS engine kind: {kind}")
         self._engines[selector] = engine
