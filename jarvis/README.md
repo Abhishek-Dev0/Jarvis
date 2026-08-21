@@ -40,10 +40,22 @@ jarvis/
 │   └── generate.py       sampling + KV cache
 ├── modules/              ← the part you bolt on. never touches core/.
 │   ├── base.py           Module / InputModule / OutputModule / SkillModule + Registry
-│   └── builtin.py        console I/O, calculator, voice stubs
+│   ├── builtin.py        console I/O, calculator, speech I/O interfaces
+│   ├── voice.py           faster-whisper STT + Kokoro/Piper TTS, 11 languages
+│   ├── translate.py       Argos Translate bridge for non-English speech
+│   ├── hardware.py        detects CPU/RAM/GPU, auto-sizes whisper + the reasoning model
+│   ├── reasoning.py        local LLM via Ollama (real conversation/knowledge), MCP tool-calling
+│   ├── web.py              live web search + page-saving for future training
+│   ├── os_control.py       open/close/list applications — security-gated
+│   ├── hardware_io.py      serial/Arduino I/O — security-gated
+│   ├── biosignal.py        EMG muscle-activity detection (pure signal processing)
+│   ├── mcp_client.py       connects to MCP servers, exposes tools to reasoning.py
+│   └── market_analysis.py  honest backtesting (buy-and-hold / SMA) — no live trading
 ├── runtime/
-│   └── jarvis.py         orchestrator: input → skill? → model → output
-├── data/                 corpus + tokenizer + .bin shards
+│   └── jarvis.py         orchestrator: input → skill? → model (+ tools) → output
+├── security.py            SecurityGate — passphrase + voiceprint verification
+├── vendor_models.py        backs up downloaded model weights for offline setup
+├── data/                 corpus + tokenizer + .bin shards + downloaded voice/translate models
 └── checkpoints/
 ```
 
@@ -52,7 +64,7 @@ jarvis/
 ## Quickstart
 
 ```bash
-pip install torch numpy regex
+pip install -r requirements.txt
 
 # 1. put your text in data/corpus.txt, then learn a vocabulary from it
 python -m core.data prepare-tokenizer --input data/corpus.txt --vocab-size 8192
@@ -67,11 +79,41 @@ python -m core.train --preset micro         # GPU, hours — first real model
 # 4. generate
 python -m core.generate --prompt "The robot"
 
-# 5. run the assistant
-python -m runtime.jarvis
+# 5. run the assistant (from the repo root)
+python -m jarvis                  # console
+python -m jarvis --voice          # microphone + spoken reply, fully local
 ```
 
-`--resume checkpoints/latest.pt` picks a run back up.
+`--resume checkpoints/latest.pt` picks a run back up. `python -m jarvis --help` lists every
+flag — voice persona/language, whisper/reasoning model overrides, and `--no-*` switches to
+disable any individual module (os control, hardware, MCP, market analysis, reasoning).
+
+---
+
+## Beyond the core model
+
+The from-scratch model is JARVIS's identity layer, not its only source of capability —
+modules attach real capability from outside it (see "Adding capability without touching
+the core" below). As of this writing that includes: voice I/O in 11 languages, a local
+reasoning LLM (Ollama) for actual conversation and knowledge — including MCP tool-calling,
+so it can use real external tools when connected to one — OS-level automation (open/close/
+list applications), serial/Arduino hardware I/O with EMG muscle-activity sensing for
+robotics/exoskeleton projects, and honest historical backtesting for markets. Every
+action that changes system state outside the conversation (launching an app, sending a
+serial command) goes through `security.py`'s `SecurityGate` first.
+
+---
+
+## Running fully offline
+
+Every model here downloads its weights **once** and runs offline forever after — none of
+it calls an API at inference time. `python -m jarvis.vendor_models status` shows what's
+already downloaded and where (Piper/Kokoro voices, faster-whisper's Hugging Face cache,
+Argos Translate packages, Ollama's model blobs); `backup` copies whatever's present into
+`vendor/` (gitignored, local only) so a re-setup — or a move to a new machine — never
+needs those sources reachable again. `restore` copies it back into place. See
+`vendor_models.py`'s docstring for exactly what is and isn't included (deliberately not
+`data/security/` — that's your passphrase/voiceprint, not a model weight).
 
 ---
 
@@ -174,8 +216,10 @@ compute; a smaller model on more data almost always wins.
    `chat_mode=True`. This is where it starts feeling like an assistant.
 4. **Then** voice. Not before. Debugging a language model and a speech pipeline
    simultaneously means you can never tell which one is broken.
-5. **Then** Loki integration — an `OutputModule` that turns text into motor
-   commands is a very natural bridge between your two projects.
+5. **Then** Loki integration — `modules/hardware_io.py`'s `SerialLink`/`HardwareSkill`
+   now cover this: connect over serial, send commands, read sensor data, all
+   security-gated. `modules/biosignal.py` adds EMG muscle-activity detection on top,
+   for driving an actuator from a wearable sensor.
 
 ---
 

@@ -32,3 +32,7 @@ jarvis/data/logs/
 
 # portable gh CLI (downloaded locally to set up the GitHub remote, not part of the project)
 .tools/
+
+# local backup of downloaded model weights (jarvis/vendor_models.py) — several
+# GB, purely a local durability copy, never belongs in git
+/vendor/
