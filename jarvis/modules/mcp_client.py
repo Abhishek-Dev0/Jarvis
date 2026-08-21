@@ -30,11 +30,15 @@ is sync. Bridged with one background thread running a persistent event loop
 — sync callers dispatch onto it with run_coroutine_threadsafe() and block
 for the result, same shape as any sync-wrapping-async bridge.
 
-Every tool call is security-gated by default (see call_tool's `gate`
-param) — same reasoning as os_control.py/hardware_io.py: a tool's real
-side effects are whatever its (someone else's) server implementation does,
-unknown to JARVIS ahead of time, so nothing here assumes a tool is safe
-just because the model wants to call it.
+Tool calls are security-gated (see call_tool's `gate` param) — same
+reasoning as os_control.py/hardware_io.py: a tool's real side effects are
+whatever its (someone else's) server implementation does, unknown to JARVIS
+ahead of time. Looser than those two modules on Abi's explicit request
+(2026-08-22): the gate here is once-per-session, not once-per-call — the
+first tool call still requires real verification, every later call this
+session skips it. os_control.py/hardware_io.py were deliberately left at
+per-action gating; this session-based looseness is MCP-specific, not a
+precedent to copy elsewhere without being asked.
 
 Nothing connects until data/mcp_servers.json lists at least one server —
 ships as an empty list by default. See _EXAMPLE_CONFIG below for the shape.
@@ -49,8 +53,10 @@ import threading
 
 try:
     from .base import SkillModule
+    from ..security import authorize_action
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+    from security import authorize_action
 
 _PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEFAULT_CONFIG_PATH = os.path.join(_PKG_DIR, "data", "mcp_servers.json")
@@ -114,6 +120,15 @@ class MCPSkill(SkillModule):
         # for the close to actually finish before stopping the loop.
         self._close_events: dict = {}   # server name -> asyncio.Event
         self._tasks: dict = {}          # server name -> concurrent.futures.Future
+        # Per Abi's 2026-08-22 explicit request: MCP tool calls gate once per
+        # session, not once per call. The first call still goes through
+        # authorize_action() for real; once that succeeds, every later tool
+        # call this session skips the check. A denied first attempt does
+        # NOT set this — the next call re-prompts rather than getting stuck
+        # permanently locked out or silently waved through. This is looser
+        # than os_control.py/hardware_io.py on purpose — Abi asked for MCP
+        # specifically, not those.
+        self._session_authorized = False
 
     @property
     def available(self) -> bool:
@@ -135,12 +150,21 @@ class MCPSkill(SkillModule):
         if not servers:
             return
         self._loop = _MCPLoop()
+
+        # Dispatch every server's connection coroutine onto the shared event
+        # loop up front, so they connect concurrently (bounded by the
+        # slowest one) instead of waiting up to 30s for each server in turn
+        # before even starting the next one's handshake.
+        pending = []
         for entry in servers:
             name = entry.get("name", "?")
             holder: dict = {}
             ready = threading.Event()
             fut = asyncio.run_coroutine_threadsafe(
                 self._serve_connection(entry, holder, ready), self._loop.loop)
+            pending.append((name, holder, ready, fut))
+
+        for name, holder, ready, fut in pending:
             if not ready.wait(timeout=30):
                 print(f"[mcp] '{name}' timed out connecting")
                 continue
@@ -230,11 +254,12 @@ class MCPSkill(SkillModule):
     # ---------------------------------------------------------------- calls
 
     def _authorized(self, reason: str) -> bool:
-        if self.is_admin_ref is not None and self.is_admin_ref():
+        if self._session_authorized:
             return True
-        if self.security_ref is None:
-            return False
-        return self.security_ref().authorize(reason)
+        ok = authorize_action(reason, self.security_ref, self.is_admin_ref)
+        if ok:
+            self._session_authorized = True
+        return ok
 
     def call_tool(self, qualified_name: str, arguments: dict, gate: bool = True) -> str:
         """qualified_name: '<server>__<tool>' as produced by as_ollama_tools()."""

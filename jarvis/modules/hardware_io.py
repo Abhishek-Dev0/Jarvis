@@ -47,8 +47,10 @@ import time
 
 try:
     from .base import SkillModule
+    from ..security import authorize_action
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+    from security import authorize_action
 
 # Common Arduino-family USB-serial chip/board identifiers, lowercased, matched
 # against pyserial's port description/manufacturer strings. Not exhaustive —
@@ -160,7 +162,15 @@ class SerialLink:
 
         def _loop():
             while not self._stream_stop.is_set() and self.connected:
-                line = self.read_line()
+                try:
+                    line = self.read_line()
+                except Exception as e:
+                    # e.g. the port was closed from another thread while
+                    # this thread was blocked inside readline(). Exit
+                    # quietly instead of dying with an unhandled exception
+                    # in a daemon thread.
+                    print(f"[hardware_io] stream read failed, stopping: {e}")
+                    return
                 if line:
                     try:
                         callback(line)
@@ -213,11 +223,7 @@ class HardwareSkill(SkillModule):
             self._link.close()
 
     def _authorized(self, reason: str) -> bool:
-        if self.is_admin_ref is not None and self.is_admin_ref():
-            return True
-        if self.security_ref is None:
-            return False
-        return self.security_ref().authorize(reason)
+        return authorize_action(reason, self.security_ref, self.is_admin_ref)
 
     def matches(self, text: str) -> bool:
         t = text.strip().lower()
@@ -253,6 +259,11 @@ class HardwareSkill(SkillModule):
     def _connect(self, port_hint: str) -> str:
         if not self._authorized("connect to a serial device"):
             return "Denied — couldn't verify you for connecting to hardware."
+        if self._link is not None:
+            # Close any previous connection first — otherwise its handle
+            # (and, on Windows, its exclusive lock on the COM port) leaks
+            # silently, and reconnecting to the same port then fails.
+            self._link.close()
         port = port_hint or None
         self._link = SerialLink(port=port, baud=self.baud)
         try:

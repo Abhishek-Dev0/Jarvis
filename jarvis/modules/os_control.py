@@ -23,8 +23,10 @@ import re
 
 try:
     from .base import SkillModule
+    from ..security import authorize_action
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+    from security import authorize_action
 
 # Friendly name -> real executable. Anything not listed here is tried as
 # typed (with .exe appended if missing) via os.startfile, which resolves
@@ -81,6 +83,28 @@ def _resolve_target(app: str) -> str:
     return app.strip()
 
 
+def _looks_like_app_name(remainder: str) -> bool:
+    """Gate for matches(): is what follows a launch/close trigger actually a
+    plausible application name, or ordinary conversation that happens to
+    start with a common verb ("open ", "start ", "run ", "close ", "kill ",
+    "quit ")? Without this, "start describing the weather" or "run me
+    through what happened" get intercepted as an app-launch request instead
+    of reaching the reasoning model — a real bug caught by code review, not
+    a safety concern, so fixed directly rather than left for a decision.
+
+    Accepts: a known alias (however many words — "file explorer", "task
+    manager", ...) or a single bare word (most real, unlisted exe names —
+    "notepad", "obs", "blender"). Rejects anything else, on the assumption
+    that a genuine app name a human would say is short, not a sentence.
+    """
+    key = remainder.strip().lower()
+    if not key:
+        return False
+    if key in _APP_ALIASES:
+        return True
+    return " " not in key
+
+
 class OSControlSkill(SkillModule):
     """open/close/list applications on this machine — gated by SecurityGate
     for anything that isn't read-only."""
@@ -102,17 +126,16 @@ class OSControlSkill(SkillModule):
         self.is_admin_ref = is_admin_ref
 
     def _authorized(self, reason: str) -> bool:
-        if self.is_admin_ref is not None and self.is_admin_ref():
-            return True
-        if self.security_ref is None:
-            return False
-        return self.security_ref().authorize(reason)
+        return authorize_action(reason, self.security_ref, self.is_admin_ref)
 
     def matches(self, text: str) -> bool:
         t = text.strip().lower()
         if t in _LIST_TRIGGERS:
             return True
-        return any(t.startswith(p) for p in (*_LAUNCH_TRIGGERS, *_CLOSE_TRIGGERS))
+        for p in (*_LAUNCH_TRIGGERS, *_CLOSE_TRIGGERS):
+            if t.startswith(p) and _looks_like_app_name(t[len(p):]):
+                return True
+        return False
 
     def _strip_trigger(self, text: str, triggers: tuple[str, ...]) -> str | None:
         t = text.strip().lower()

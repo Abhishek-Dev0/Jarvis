@@ -201,6 +201,24 @@ def enroll(passphrase: str | None = None, voice_audio: np.ndarray | None = None,
         print("[security] voiceprint enrolled from the same recording.")
 
 
+def authorize_action(reason: str, security_ref=None, is_admin_ref=None) -> bool:
+    """Shared gating check for skill modules that need SecurityGate
+    verification before a state-changing action (os_control.py,
+    hardware_io.py, mcp_client.py all had their own copy of exactly this
+    logic — kept here once so it can't drift between them).
+
+    security_ref: () -> SecurityGate, deferred so callers don't have to hold
+    a live reference (main() may swap Jarvis.security after construction).
+    is_admin_ref: () -> bool; an already-verified admin session (see
+    Jarvis.run()'s wake_challenge) skips re-authorizing every action.
+    """
+    if is_admin_ref is not None and is_admin_ref():
+        return True
+    if security_ref is None:
+        return False
+    return security_ref().authorize(reason)
+
+
 class SecurityGate:
     """Call authorize(reason) before anything irreversible or risky.
     Returns True only if every enrolled factor passes."""
