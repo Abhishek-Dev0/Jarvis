@@ -23,6 +23,7 @@ try:
     from jarvis.modules.os_control import OSControlSkill
     from jarvis.modules.hardware_io import HardwareSkill
     from jarvis.modules.mcp_client import MCPSkill
+    from jarvis.modules.market_analysis import MarketAnalysisSkill
     from jarvis.security import SecurityGate
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
@@ -33,6 +34,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.os_control import OSControlSkill
     from modules.hardware_io import HardwareSkill
     from modules.mcp_client import MCPSkill
+    from modules.market_analysis import MarketAnalysisSkill
     from security import SecurityGate
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
@@ -341,6 +343,9 @@ def main():
                          "capability entirely")
     ap.add_argument("--mcp-config", default=os.path.join(_PKG_DIR, "data", "mcp_servers.json"),
                     help="path to the MCP server config (see modules/mcp_client.py for the shape)")
+    ap.add_argument("--no-market-analysis", action="store_true",
+                    help="disable the backtesting skill (\"backtest AAPL\", \"analyze crypto BTC-USD\") — "
+                         "read-only historical analysis, no live trading account involved")
     args = ap.parse_args()
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
@@ -392,6 +397,8 @@ def main():
     if not args.no_hardware:
         j.register(HardwareSkill(security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin,
                                   baud=args.hardware_baud))
+    if not args.no_market_analysis:
+        j.register(MarketAnalysisSkill())
     mcp_skill = None
     if not args.no_mcp:
         mcp_skill = MCPSkill(config_path=args.mcp_config,
