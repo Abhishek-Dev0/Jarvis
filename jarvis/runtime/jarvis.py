@@ -19,12 +19,14 @@ try:
     from jarvis.modules.base import Registry
     from jarvis.modules.builtin import ConsoleInput, ConsoleOutput, CalculatorSkill, SpeechInput, SpeechOutput
     from jarvis.modules.web import WebSearchSkill, WebGrowthSkill
+    from jarvis.modules.reasoning import ReasoningSkill
     from jarvis.security import SecurityGate
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
     from modules.base import Registry
     from modules.builtin import ConsoleInput, ConsoleOutput, CalculatorSkill, SpeechInput, SpeechOutput
     from modules.web import WebSearchSkill, WebGrowthSkill
+    from modules.reasoning import ReasoningSkill
     from security import SecurityGate
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
@@ -308,6 +310,13 @@ def main():
     ap.add_argument("--whisper-device", default=None,
                     help="cuda or cpu for faster-whisper — falls back to cpu automatically "
                          "if cuda isn't actually available. Default: auto-picked, see modules/hardware.py")
+    ap.add_argument("--reasoning-model", default="qwen2.5:3b",
+                    help="Ollama model for real conversation/knowledge (sized to fit this "
+                         "machine's 4GB VRAM — a bigger model will just be slow, not smarter "
+                         "in a way that's worth the wait; see modules/reasoning.py). "
+                         "Skipped automatically if Ollama isn't running.")
+    ap.add_argument("--no-reasoning", action="store_true",
+                    help="disable the Ollama reasoning module — fall back to skills + the raw core model")
     args = ap.parse_args()
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
@@ -354,6 +363,8 @@ def main():
     j.register(CalculatorSkill())
     j.register(WebSearchSkill())
     j.register(WebGrowthSkill(data_dir=os.path.join(_PKG_DIR, "data", "web")))
+    if not args.no_reasoning:
+        j.register(ReasoningSkill(model=args.reasoning_model, history_ref=lambda: j.history))
     j.run()
 
 
