@@ -20,6 +20,7 @@ try:
     from jarvis.modules.builtin import ConsoleInput, ConsoleOutput, CalculatorSkill, SpeechInput, SpeechOutput
     from jarvis.modules.web import WebSearchSkill, WebGrowthSkill
     from jarvis.modules.reasoning import ReasoningSkill
+    from jarvis.modules.os_control import OSControlSkill
     from jarvis.security import SecurityGate
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.builtin import ConsoleInput, ConsoleOutput, CalculatorSkill, SpeechInput, SpeechOutput
     from modules.web import WebSearchSkill, WebGrowthSkill
     from modules.reasoning import ReasoningSkill
+    from modules.os_control import OSControlSkill
     from security import SecurityGate
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
@@ -317,6 +319,10 @@ def main():
                          "Skipped automatically if Ollama isn't running.")
     ap.add_argument("--no-reasoning", action="store_true",
                     help="disable the Ollama reasoning module — fall back to skills + the raw core model")
+    ap.add_argument("--no-os-control", action="store_true",
+                    help="disable OS-agentic control (open/close/list applications) — "
+                         "every state-changing action is security-gated regardless, "
+                         "this just removes the capability entirely")
     args = ap.parse_args()
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
@@ -363,6 +369,8 @@ def main():
     j.register(CalculatorSkill())
     j.register(WebSearchSkill())
     j.register(WebGrowthSkill(data_dir=os.path.join(_PKG_DIR, "data", "web")))
+    if not args.no_os_control:
+        j.register(OSControlSkill(security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin))
     if not args.no_reasoning:
         j.register(ReasoningSkill(model=args.reasoning_model, history_ref=lambda: j.history))
     j.run()

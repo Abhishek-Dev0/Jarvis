@@ -3,3 +3,4 @@ numpy
 regex
 requests
 beautifulsoup4
+psutil
