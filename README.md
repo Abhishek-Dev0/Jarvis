@@ -188,3 +188,11 @@ Every claim above was tested, not assumed:
 - init loss 8.33 vs theoretical `ln(vocab)` = 8.32
 - a `nano` model trained to near the corpus entropy floor and generates
   structurally correct text
+
+---
+
+## License
+
+All rights reserved — see [LICENSE](LICENSE). This is a private repository;
+access to it does not grant permission to use, copy, modify, or redistribute
+its contents.
