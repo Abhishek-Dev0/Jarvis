@@ -1,0 +1,13 @@
+[
+  {
+    "name": "filesystem",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\some\\path"]
+  },
+  {
+    "name": "remote-example",
+    "transport": "sse",
+    "url": "https://example.com/mcp/sse"
+  }
+]

@@ -13,7 +13,15 @@ session) benchmarked at ~3m48s for one short sentence — 12B doesn't fit in
 4GB, so most of it runs on CPU. qwen2.5:3b benchmarked at ~1.6s once warm —
 fits in VRAM, fast enough for real conversation. Default here reflects that
 measurement, not a guess; override with a bigger model if you have the VRAM
-for it, or once modules/hardware.py grows a real quantization-aware picker.
+for it, or let modules/hardware.py's recommend_reasoning_model() pick.
+
+Optionally hands off to modules/mcp_client.py: if constructed with an
+mcp_ref (see runtime/jarvis.py), tool schemas from connected MCP servers are
+passed into Ollama's tool-calling API (qwen2.5 supports it) so the model can
+decide, from plain conversation, that it needs to call a real tool — not a
+rigid "mcp call X Y" command a human has to type correctly. Every tool call
+the model requests still goes through MCPSkill.call_tool(), which is
+security-gated by default; see that module's docstring for why.
 """
 
 from __future__ import annotations
@@ -34,7 +42,8 @@ class ReasoningSkill(SkillModule):
     priority = -100
 
     def __init__(self, model="qwen2.5:3b", host="http://localhost:11434",
-                 system_prompt=None, history_ref=None, max_history=6, timeout=60):
+                 system_prompt=None, history_ref=None, max_history=6, timeout=60,
+                 mcp_ref=None, max_tool_turns=4):
         self.model = model
         self.host = host.rstrip("/")
         self.system_prompt = system_prompt or (
@@ -45,6 +54,14 @@ class ReasoningSkill(SkillModule):
         self.history_ref = history_ref
         self.max_history = max_history
         self.timeout = timeout
+        # Callable returning the live MCPSkill instance (same lambda-ref
+        # pattern as history_ref/security_ref elsewhere) — deferred so this
+        # doesn't care whether MCP connected before or after construction.
+        self.mcp_ref = mcp_ref
+        # Hard cap on model-requests-a-tool -> tool-runs -> model-answers
+        # round trips per turn, so a model stuck calling tools in a loop
+        # can't hang a conversation turn forever.
+        self.max_tool_turns = max_tool_turns
         self._available = None
 
     @property
@@ -85,11 +102,32 @@ class ReasoningSkill(SkillModule):
                 messages.append({"role": "user", "content": u})
                 messages.append({"role": "assistant", "content": a})
         messages.append({"role": "user", "content": text})
-        try:
-            r = requests.post(f"{self.host}/api/chat",
-                               json={"model": self.model, "messages": messages, "stream": False},
-                               timeout=self.timeout)
-            r.raise_for_status()
-            return r.json()["message"]["content"].strip()
-        except Exception as e:
-            return f"My reasoning model isn't responding ({e}). Is `ollama serve` running?"
+
+        mcp = self.mcp_ref() if self.mcp_ref is not None else None
+        tools = mcp.as_ollama_tools() if mcp is not None else None
+
+        for _ in range(self.max_tool_turns):
+            payload = {"model": self.model, "messages": messages, "stream": False}
+            if tools:
+                payload["tools"] = tools
+            try:
+                r = requests.post(f"{self.host}/api/chat", json=payload, timeout=self.timeout)
+                r.raise_for_status()
+                msg = r.json()["message"]
+            except Exception as e:
+                return f"My reasoning model isn't responding ({e}). Is `ollama serve` running?"
+
+            calls = msg.get("tool_calls")
+            if not calls:
+                return (msg.get("content") or "").strip()
+
+            messages.append(msg)
+            for call in calls:
+                fn = call.get("function", {})
+                name = fn.get("name", "")
+                args = fn.get("arguments") or {}
+                result = mcp.call_tool(name, args) if mcp is not None else \
+                    f"No MCP connection available to call '{name}'."
+                messages.append({"role": "tool", "content": str(result)})
+
+        return "I kept needing another tool call and hit the limit for this turn — try asking again, more narrowly."

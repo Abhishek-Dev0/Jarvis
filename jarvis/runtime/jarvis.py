@@ -22,6 +22,7 @@ try:
     from jarvis.modules.reasoning import ReasoningSkill
     from jarvis.modules.os_control import OSControlSkill
     from jarvis.modules.hardware_io import HardwareSkill
+    from jarvis.modules.mcp_client import MCPSkill
     from jarvis.security import SecurityGate
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
@@ -31,6 +32,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.reasoning import ReasoningSkill
     from modules.os_control import OSControlSkill
     from modules.hardware_io import HardwareSkill
+    from modules.mcp_client import MCPSkill
     from security import SecurityGate
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
@@ -332,6 +334,13 @@ def main():
                          "pyserial isn't installed.")
     ap.add_argument("--hardware-baud", type=int, default=115200,
                     help="baud rate for serial connections opened via the hardware skill")
+    ap.add_argument("--no-mcp", action="store_true",
+                    help="disable the MCP client (connects to servers listed in "
+                         "data/mcp_servers.json, lets the reasoning model call their tools) — "
+                         "tool calls are security-gated regardless; this just removes the "
+                         "capability entirely")
+    ap.add_argument("--mcp-config", default=os.path.join(_PKG_DIR, "data", "mcp_servers.json"),
+                    help="path to the MCP server config (see modules/mcp_client.py for the shape)")
     args = ap.parse_args()
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
@@ -383,13 +392,19 @@ def main():
     if not args.no_hardware:
         j.register(HardwareSkill(security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin,
                                   baud=args.hardware_baud))
+    mcp_skill = None
+    if not args.no_mcp:
+        mcp_skill = MCPSkill(config_path=args.mcp_config,
+                              security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin)
+        j.register(mcp_skill)
     if not args.no_reasoning:
         reasoning_model = args.reasoning_model
         if reasoning_model is None:
             from jarvis.modules import hardware
             reasoning_model = hardware.recommend_reasoning_model()
             print(f"[jarvis] auto-sized reasoning model for this machine: {reasoning_model}")
-        j.register(ReasoningSkill(model=reasoning_model, history_ref=lambda: j.history))
+        j.register(ReasoningSkill(model=reasoning_model, history_ref=lambda: j.history,
+                                   mcp_ref=(lambda: mcp_skill) if mcp_skill is not None else None))
     j.run()
 
 

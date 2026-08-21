@@ -4,3 +4,4 @@ data/*.bin
 data/*.txt
 data/meta.txt
 checkpoints/*.pt
+data/mcp_servers.json
