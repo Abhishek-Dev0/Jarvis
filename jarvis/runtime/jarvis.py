@@ -27,6 +27,7 @@ try:
     from jarvis.modules.market_analysis import MarketAnalysisSkill
     from jarvis.modules.health import HealthCheckSkill
     from jarvis.modules.memory import MemorySkill
+    from jarvis.modules.fileread import FileReadSkill
     from jarvis.security import SecurityGate
     from jarvis import security
     from jarvis import self_modify
@@ -43,6 +44,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.market_analysis import MarketAnalysisSkill
     from modules.health import HealthCheckSkill
     from modules.memory import MemorySkill
+    from modules.fileread import FileReadSkill
     from security import SecurityGate
     import security
     import self_modify
@@ -763,6 +765,7 @@ def main():
     j.register(HealthCheckSkill(jarvis_ref=lambda: j,
                                  mcp_ref=(lambda: mcp_skill) if mcp_skill is not None else None))
     j.register(MemorySkill())
+    j.register(FileReadSkill())
     reasoning_model = args.reasoning_model
     if reasoning_model is None and (not args.no_reasoning or not args.no_self_modify):
         from jarvis.modules import hardware
