@@ -128,6 +128,25 @@ def test_handle_works_fine_with_no_memories_recorded(tmp_path, monkeypatch):
     assert "facts you were previously told" not in captured["messages"][0]["content"]
 
 
+def test_handle_includes_current_date_and_time_in_system_prompt(monkeypatch):
+    import jarvis.modules.reasoning as reasoning
+
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured.update(json)
+        return _FakeResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr("requests.post", fake_post)
+    monkeypatch.setattr(reasoning, "_now_str", lambda: "Sunday, 2026-08-23 14:00 JST")
+
+    sk = ReasoningSkill()
+    sk.handle("what time is it?")
+
+    system_message = captured["messages"][0]
+    assert "Current date and time: Sunday, 2026-08-23 14:00 JST" in system_message["content"]
+
+
 def test_handle_includes_summary_ref_in_system_prompt(monkeypatch):
     captured = {}
 

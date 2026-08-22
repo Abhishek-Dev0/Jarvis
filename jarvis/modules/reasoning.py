@@ -32,6 +32,15 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
 
 
+def _now_str() -> str:
+    """Local system time, not UTC -- what a person actually means by "now"
+    when they ask JARVIS the time. A separate function (not inlined into
+    handle()) purely so tests can monkeypatch a fixed value instead of
+    asserting against a moving clock."""
+    from datetime import datetime
+    return datetime.now().astimezone().strftime("%A, %Y-%m-%d %H:%M %Z")
+
+
 class ReasoningSkill(SkillModule):
     name = "reasoning"
     description = "local LLM (Ollama) for real conversation/knowledge"
@@ -127,7 +136,10 @@ class ReasoningSkill(SkillModule):
 
     def handle(self, text):
         import requests
-        system_content = self.system_prompt
+        # qwen2.5:3b has no clock of its own -- a real "what time is it" /
+        # "what's today's date" surfaced this live (2026-08-23): without
+        # this, the model correctly says it has no way to know.
+        system_content = self.system_prompt + f"\n\nCurrent date and time: {_now_str()}"
         try:
             try:
                 from .memory import memory_context
