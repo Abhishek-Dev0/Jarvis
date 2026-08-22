@@ -25,6 +25,7 @@ try:
     from jarvis.modules.mcp_client import MCPSkill
     from jarvis.modules.market_analysis import MarketAnalysisSkill
     from jarvis.security import SecurityGate
+    from jarvis import self_modify
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
     from modules.base import Registry
@@ -36,6 +37,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.mcp_client import MCPSkill
     from modules.market_analysis import MarketAnalysisSkill
     from security import SecurityGate
+    import self_modify
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
 # SecurityGate) rather than by input modules swallowing them, so verification
@@ -265,27 +267,39 @@ class Jarvis:
                     continue
 
                 skill = self.registry.find_skill(text)
-                if skill is not None:
-                    reply = skill.handle(text)
-                    self.history.append((text, reply))
-                    if translate:
-                        reply = self.translator.translate(reply, "en", lang)
-                    self.registry.emit_all(reply)
-                else:
-                    if self.model is None:
-                        self.registry.emit_all(
-                            "No model loaded — train one first.")
-                        continue
-                    if translate:
-                        # Translation needs the complete English reply before
-                        # it can run, so this path can't stream token-by-token
-                        # to the speaker the way the English path does.
-                        english_in = self.translator.translate(text, lang, "en")
-                        reply = self.respond(english_in, stream=False)
-                        self.registry.emit_all(self.translator.translate(reply, "en", lang))
+                try:
+                    if skill is not None:
+                        reply = skill.handle(text)
+                        self.history.append((text, reply))
+                        if translate:
+                            reply = self.translator.translate(reply, "en", lang)
+                        self.registry.emit_all(reply)
                     else:
-                        print("jarvis> ", end="", flush=True)
-                        self.respond(text, stream=True)
+                        if self.model is None:
+                            self.registry.emit_all(
+                                "No model loaded — train one first.")
+                            continue
+                        if translate:
+                            # Translation needs the complete English reply before
+                            # it can run, so this path can't stream token-by-token
+                            # to the speaker the way the English path does.
+                            english_in = self.translator.translate(text, lang, "en")
+                            reply = self.respond(english_in, stream=False)
+                            self.registry.emit_all(self.translator.translate(reply, "en", lang))
+                        else:
+                            print("jarvis> ", end="", flush=True)
+                            self.respond(text, stream=True)
+                except Exception as e:
+                    # A skill or the model raising used to crash the whole
+                    # process (find_skill() already guards matches(), but
+                    # nothing guarded handle()/respond()) — caught here so
+                    # one bad turn doesn't end the session, and logged so
+                    # self_modify.py's autonomous scanner has something real
+                    # to work from.
+                    source_name = skill.name if skill is not None else "reasoning-or-core"
+                    self_modify.log_exception(f"turn:{source_name}", e)
+                    print(f"[jarvis] error handling that turn: {e}")
+                    self.registry.emit_all("Something went wrong handling that — see the log.")
         finally:
             self.registry.teardown_all()
             print("\n[jarvis] shutdown")
@@ -346,6 +360,18 @@ def main():
     ap.add_argument("--no-market-analysis", action="store_true",
                     help="disable the backtesting skill (\"backtest AAPL\", \"analyze crypto BTC-USD\") — "
                          "read-only historical analysis, no live trading account involved")
+    ap.add_argument("--no-self-modify", action="store_true",
+                    help="disable the self-modify skill (\"propose fix <path>: <problem>\", "
+                         "\"approve proposal <id>\") — drafts+sandbox-tests only, applying a "
+                         "proposal is security-gated regardless; this just removes the capability")
+    ap.add_argument("--self-modify-autoscan", action="store_true",
+                    help="run the autonomous issue scanner in the background — periodically drafts "
+                         "and sandbox-tests proposals for logged issues, unattended. Never applies "
+                         "anything on its own. Off by default, same as --voice/--chat-mode: a "
+                         "continuously-running background capability should be opted into, not "
+                         "silently on.")
+    ap.add_argument("--self-modify-scan-interval", type=int, default=1800,
+                    help="seconds between autonomous scan cycles (default 1800 = 30 min)")
     args = ap.parse_args()
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
@@ -404,15 +430,31 @@ def main():
         mcp_skill = MCPSkill(config_path=args.mcp_config,
                               security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin)
         j.register(mcp_skill)
+    reasoning_model = args.reasoning_model
+    if reasoning_model is None and (not args.no_reasoning or not args.no_self_modify):
+        from jarvis.modules import hardware
+        reasoning_model = hardware.recommend_reasoning_model()
+        print(f"[jarvis] auto-sized reasoning model for this machine: {reasoning_model}")
     if not args.no_reasoning:
-        reasoning_model = args.reasoning_model
-        if reasoning_model is None:
-            from jarvis.modules import hardware
-            reasoning_model = hardware.recommend_reasoning_model()
-            print(f"[jarvis] auto-sized reasoning model for this machine: {reasoning_model}")
         j.register(ReasoningSkill(model=reasoning_model, history_ref=lambda: j.history,
                                    mcp_ref=(lambda: mcp_skill) if mcp_skill is not None else None))
-    j.run()
+
+    scanner = None
+    if not args.no_self_modify:
+        j.register(self_modify.SelfModifySkill(
+            security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin, model=reasoning_model))
+        if args.self_modify_autoscan:
+            scanner = self_modify.AutonomousScanner(
+                interval_seconds=args.self_modify_scan_interval, model=reasoning_model)
+            scanner.start()
+            print(f"[jarvis] self-modify autonomous scanner running every "
+                  f"{args.self_modify_scan_interval}s — drafts+tests only, never applies")
+
+    try:
+        j.run()
+    finally:
+        if scanner is not None:
+            scanner.stop()
 
 
 if __name__ == "__main__":

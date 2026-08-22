@@ -27,6 +27,10 @@ jarvis/data/security/
 jarvis/data/web/
 jarvis/data/logs/
 
+# self-modify proposals (drafts + sandbox test output) — local working
+# state, not source; the applied result (if any) is the real diff to commit
+jarvis/data/self_modify/
+
 # editor
 .vscode/
 
