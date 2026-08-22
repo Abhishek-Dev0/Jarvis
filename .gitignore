@@ -27,6 +27,10 @@ jarvis/data/_pre_ftfy_backup/
 # to publish the hash/salt or a biometric embedding either.
 jarvis/data/security/
 
+# personal — facts Abi has told JARVIS to remember (modules/memory.py).
+# Private by nature, same reasoning as data/security/.
+jarvis/data/memory.json
+
 # scraped web cache + runtime logs — local working state, not source
 jarvis/data/web/
 jarvis/data/logs/

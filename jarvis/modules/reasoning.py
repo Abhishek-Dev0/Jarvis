@@ -63,12 +63,17 @@ class ReasoningSkill(SkillModule):
 
     def __init__(self, model="qwen2.5:3b", host="http://localhost:11434",
                  system_prompt=None, history_ref=None, max_history=6, timeout=60,
-                 mcp_ref=None, max_tool_turns=4):
+                 mcp_ref=None, max_tool_turns=4, memory_path=None):
         self.model = model
         self.host = host.rstrip("/")
         self.system_prompt = (system_prompt or (
             "You are JARVIS, a helpful local assistant. Be concise and direct.")
         ) + self._INJECTION_GUARD
+        # None -> modules/memory.py's own default path. Loaded fresh every
+        # handle() call (see below), not cached at construction time, so a
+        # "remember that X" said earlier in this same session is usable
+        # immediately, not just after a restart.
+        self.memory_path = memory_path
         # Callable returning Jarvis.history (e.g. lambda: j.history) so this
         # stays in sync with the live conversation without importing Jarvis
         # itself — modules don't reach back into the orchestrator.
@@ -117,7 +122,18 @@ class ReasoningSkill(SkillModule):
 
     def handle(self, text):
         import requests
-        messages = [{"role": "system", "content": self.system_prompt}]
+        system_content = self.system_prompt
+        try:
+            try:
+                from .memory import memory_context
+            except ImportError:  # pragma: no cover - legacy direct execution
+                from memory import memory_context
+            extra = memory_context(self.memory_path)
+            if extra:
+                system_content = system_content + "\n\n" + extra
+        except Exception:
+            pass  # memory is a nice-to-have; never block a reply on it
+        messages = [{"role": "system", "content": system_content}]
         if self.history_ref is not None:
             for u, a in self.history_ref()[-self.max_history:]:
                 messages.append({"role": "user", "content": u})

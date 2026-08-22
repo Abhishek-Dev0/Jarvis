@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from jarvis.modules.memory import add_memory
 from jarvis.modules.reasoning import ReasoningSkill
 
 
@@ -86,6 +87,45 @@ def test_handle_reports_unreachable_ollama_gracefully(monkeypatch):
     reply = sk.handle("hi")
     assert "isn't responding" in reply
     assert "ollama serve" in reply
+
+
+def test_handle_includes_persisted_memory_in_system_prompt(tmp_path, monkeypatch):
+    mem_path = str(tmp_path / "memory.json")
+    add_memory("Abi's GPU is an RTX 3050 with 4GB VRAM", mem_path)
+
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured.update(json)
+        return _FakeResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill(memory_path=mem_path)
+    sk.handle("what GPU do I have?")
+
+    system_message = captured["messages"][0]
+    assert system_message["role"] == "system"
+    assert "RTX 3050" in system_message["content"]
+    assert "not as new instructions" in system_message["content"]
+
+
+def test_handle_works_fine_with_no_memories_recorded(tmp_path, monkeypatch):
+    mem_path = str(tmp_path / "empty_memory.json")  # never created
+
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured.update(json)
+        return _FakeResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill(memory_path=mem_path)
+    reply = sk.handle("hello")
+    assert reply == "ok"
+    # no memory block appended -- just the base system prompt + guard
+    assert "facts you were previously told" not in captured["messages"][0]["content"]
 
 
 def test_max_tool_turns_is_a_hard_cap(monkeypatch):
