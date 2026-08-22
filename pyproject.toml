@@ -12,6 +12,12 @@ dependencies = [
   "numpy",
   "regex",
   "torch",
+  "requests",
+  "beautifulsoup4",
+  "psutil",
+  "pyserial",
+  "mcp",
+  "yfinance",
 ]
 
 [project.scripts]

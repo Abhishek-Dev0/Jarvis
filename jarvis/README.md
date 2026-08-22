@@ -149,6 +149,28 @@ Getting a conversational JARVIS is two stages, same code both times:
 1. **Pretrain** on a large raw corpus → `chat_mode=False`
 2. **Fine-tune** on `<|user|>…<|assistant|>…<|eos|>` transcripts → `chat_mode=True`
 
+Both stages are done, end to end, with real data (not a synthetic smoke test):
+
+```bash
+python -m core.data fetch-dolly --output data/dolly_pairs.json   # Databricks Dolly 15k, CC BY-SA 3.0
+python -m core.data format-chat --input data/dolly_pairs.json --output data/chat.txt
+python -m core.data prepare --input data/chat.txt --tokenizer data/tokenizer.json \
+    --out-dir data/chat --val-fraction 0.05
+python -m core.train --preset nano --data-dir data/chat --ckpt-dir checkpoints/chat \
+    --resume checkpoints/best.pt --max-steps 3000
+python -m jarvis --chat-mode --ckpt checkpoints/chat/best.pt   # from the repo root
+```
+
+9,715 Dolly examples (filtered to fit the nano preset's 256-token context), 3,000 steps,
+6 minutes on an RTX 3050. Val loss dropped from 6.22 (raw pretrain, never seen the chat
+format at all) to 4.36. Mechanically correct — the model reliably learned the
+`<|user|>`/`<|assistant|>`/`<|eos|>` structure and stops cleanly — but content quality is
+weak, honestly: a 1.8M-parameter model doesn't have the capacity to be coherent or factual,
+fine-tuning changes what format it outputs, not how much it actually knows. `--chat-mode`
+against `checkpoints/chat/best.pt` is real and working; don't expect real answers out of it
+at this scale. Fine-tuning is otherwise scale-invariant — the same commands against a
+`micro`/`small` preset trained on more data will produce something actually useful.
+
 ---
 
 ## Adding capability without touching the core
@@ -213,7 +235,10 @@ compute; a smaller model on more data almost always wins.
    produces genuinely readable English. Watch the val loss — when it stops
    falling while train loss keeps falling, you are overfitting; get more data.
 3. **Build the fine-tune stage.** Format conversations, train on them, flip
-   `chat_mode=True`. This is where it starts feeling like an assistant.
+   `chat_mode=True`. This is where it starts feeling like an assistant — see
+   "Two traps" above for the real commands/numbers; done against real data, not
+   just a mechanics test, as of 2026-08-22 (nano preset — scale up the preset for
+   quality, the pipeline itself doesn't change).
 4. **Then** voice. Not before. Debugging a language model and a speech pipeline
    simultaneously means you can never tell which one is broken.
 5. **Then** Loki integration — `modules/hardware_io.py`'s `SerialLink`/`HardwareSkill`

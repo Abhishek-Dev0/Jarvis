@@ -106,6 +106,56 @@ def prepare(input_path: str, tokenizer_path: str, out_dir: str,
     print(f"wrote -> {out_dir}/train.bin, {out_dir}/val.bin")
 
 
+# ------------------------------------------------------------- chat datasets
+
+_DOLLY_URL = ("https://huggingface.co/datasets/databricks/databricks-dolly-15k/"
+              "resolve/main/databricks-dolly-15k.jsonl")
+
+
+def fetch_dolly(output_path: str, max_combined_chars: int = 700) -> int:
+    """Downloads Databricks Dolly 15k (CC BY-SA 3.0 — free for any purpose,
+    including commercial, with attribution) and writes it out as the
+    [[user, assistant], ...] JSON format-chat expects.
+
+    This is the real chat fine-tune dataset — see the 2026-08-22 roadmap
+    notes for why: a from-scratch nano/micro model has never seen a single
+    conversation, only raw prose, so it cannot follow the <|user|>/
+    <|assistant|> format at all until fine-tuned on examples of it. Dolly
+    was picked over Alpaca-style datasets specifically because it's
+    human-written, not distilled from another model's outputs, and its
+    license is unambiguous (Alpaca's generation via OpenAI's API makes its
+    own licensing murkier).
+
+    max_combined_chars filters out examples whose instruction+context+
+    response would blow well past a nano/micro model's block_size (256-512
+    tokens) — keeps every kept example usable at pretraining's context
+    length instead of silently truncating mid-example.
+    """
+    import requests
+    r = requests.get(_DOLLY_URL, timeout=60)
+    r.raise_for_status()
+
+    pairs = []
+    for line in r.text.splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        instruction = (rec.get("instruction") or "").strip()
+        context = (rec.get("context") or "").strip()
+        response = (rec.get("response") or "").strip()
+        if not instruction or not response:
+            continue
+        user = f"{instruction}\n\n{context}" if context else instruction
+        if len(user) + len(response) > max_combined_chars:
+            continue
+        pairs.append([user, response])
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(pairs, f)
+    print(f"kept {len(pairs)} pairs (of {r.text.count(chr(10))} total records) -> {output_path}")
+    return len(pairs)
+
+
 # --------------------------------------------------------------- web absorption
 
 def absorb_web(web_dir: str, corpus_path: str) -> int:
@@ -232,6 +282,10 @@ def main():
     d.add_argument("--input", required=True, help="JSON file containing a list of [user, assistant] pairs")
     d.add_argument("--output", default="data/chat.txt")
 
+    e = sub.add_parser("fetch-dolly", help="download Databricks Dolly 15k as [user, assistant] pairs JSON")
+    e.add_argument("--output", default="data/dolly_pairs.json")
+    e.add_argument("--max-combined-chars", type=int, default=700)
+
     args = ap.parse_args()
     if args.cmd == "prepare-tokenizer":
         train_tokenizer(args.input, args.out, args.vocab_size, args.max_chars)
@@ -239,6 +293,8 @@ def main():
         prepare(args.input, args.tokenizer, args.out_dir, args.val_fraction)
     elif args.cmd == "absorb-web":
         absorb_web(args.web_dir, args.corpus)
+    elif args.cmd == "fetch-dolly":
+        fetch_dolly(args.output, args.max_combined_chars)
     elif args.cmd == "format-chat":
         with open(args.input, "r", encoding="utf-8") as f:
             turns = json.load(f)

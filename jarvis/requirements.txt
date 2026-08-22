@@ -7,3 +7,14 @@ psutil
 pyserial
 mcp
 yfinance
+
+# voice I/O + translation (modules/voice.py, modules/translate.py) — optional at
+# import time (each module degrades gracefully if missing) but required for --voice
+faster-whisper
+kokoro-onnx
+piper-tts
+speechbrain
+argostranslate
+
+# self-modify pipeline's sandboxed test run (self_modify.py)
+pytest

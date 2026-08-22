@@ -14,8 +14,12 @@ venv/
 # auto-download on first use.
 jarvis/data/models/
 jarvis/checkpoints/*.pt
+jarvis/checkpoints/chat/
 jarvis/data/train.bin
 jarvis/data/val.bin
+jarvis/data/chat/
+jarvis/data/chat.txt
+jarvis/data/dolly_pairs.json
 jarvis/data/_pre_ftfy_backup/
 
 # sensitive — passphrase hash + voiceprint embedding. Never commit even
