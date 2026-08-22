@@ -1,6 +1,44 @@
 from jarvis.runtime.jarvis import Jarvis, _normalize_phrase
 
 
+def test_record_turn_appends_and_does_not_summarize_by_default():
+    j = Jarvis(max_history=2)
+    j._record_turn("hi", "hello")
+    j._record_turn("how are you", "good")
+    j._record_turn("bye", "goodbye")
+    assert len(j.history) == 3
+    assert j.history_summary == ""  # summarize_enabled defaults to False
+
+
+def test_record_turn_folds_aging_out_turns_when_summarize_enabled(monkeypatch):
+    import jarvis.modules.summarize as summarize
+
+    calls = []
+
+    def fake_fold(previous_summary, user_text, reply, model="qwen2.5:3b",
+                   host="http://localhost:11434", timeout=30):
+        calls.append((previous_summary, user_text, reply))
+        return f"{previous_summary}|{user_text}"
+
+    monkeypatch.setattr(summarize, "fold_turn_into_summary", fake_fold)
+
+    j = Jarvis(max_history=2)
+    j.summarize_enabled = True
+    j._record_turn("turn1 user", "turn1 reply")
+    j._record_turn("turn2 user", "turn2 reply")
+    assert calls == []  # window not yet full past max_history
+
+    j._record_turn("turn3 user", "turn3 reply")
+    assert len(calls) == 1
+    assert calls[0][1] == "turn1 user"  # the turn that just aged out
+    assert j.history_summary == "|turn1 user"
+
+    j._record_turn("turn4 user", "turn4 reply")
+    assert len(calls) == 2
+    assert calls[1][1] == "turn2 user"
+    assert j.history_summary == "|turn1 user|turn2 user"
+
+
 def test_admin_trigger_phrases_normalize_correctly():
     j = Jarvis()
     assert _normalize_phrase("I'm the admin") in j.admin_trigger_phrases

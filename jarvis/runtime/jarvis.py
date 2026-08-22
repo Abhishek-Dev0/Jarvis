@@ -208,10 +208,20 @@ _PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class Jarvis:
     def __init__(self, ckpt="checkpoints/best.pt", tokenizer="data/tokenizer.json",
                  device="auto", max_history=6, gen_kwargs=None, chat_mode=False,
-                 admin_name="admin"):
+                 admin_name="admin", summary_model="qwen2.5:3b"):
         self.registry = Registry()
         self.history: list[tuple[str, str]] = []
         self.max_history = max_history
+        # Running recap of everything that's aged out of the last
+        # max_history turns (see modules/summarize.py) — in memory only,
+        # same lifetime as self.history, reset every process restart.
+        self.history_summary = ""
+        self.summary_model = summary_model
+        # Off by default: folding a turn into the summary costs an extra
+        # Ollama call, so only pay for it when something actually reads
+        # history_summary back (main() flips this on alongside registering
+        # ReasoningSkill with summary_ref=...).
+        self.summarize_enabled = False
         self.gen_kwargs = gen_kwargs or dict(
             max_new_tokens=200, temperature=0.8, top_k=40,
             top_p=0.95, repetition_penalty=1.1,
@@ -297,6 +307,22 @@ class Jarvis:
     def register(self, module):
         return self.registry.register(module)
 
+    def _record_turn(self, user_text: str, reply: str) -> None:
+        """Appends a turn to history and, once it's about to push an older
+        turn out of the live max_history window (see build_prompt and
+        reasoning.py's own slicing), folds that aging-out turn into the
+        running summary first so it isn't just lost — see
+        modules/summarize.py."""
+        if self.summarize_enabled and len(self.history) >= self.max_history:
+            aged_user, aged_reply = self.history[-self.max_history]
+            try:
+                from jarvis.modules.summarize import fold_turn_into_summary
+            except ImportError:  # pragma: no cover - legacy direct execution
+                from modules.summarize import fold_turn_into_summary
+            self.history_summary = fold_turn_into_summary(
+                self.history_summary, aged_user, aged_reply, model=self.summary_model)
+        self.history.append((user_text, reply))
+
     # --------------------------------------------------------------- prompting
 
     def build_prompt(self, user_text: str) -> str:
@@ -327,7 +353,7 @@ class Jarvis:
         skill = self.registry.find_skill(user_text)
         if skill is not None:
             reply = skill.handle(user_text)
-            self.history.append((user_text, reply))
+            self._record_turn(user_text, reply)
             return reply
 
         if self.model is None:
@@ -358,7 +384,7 @@ class Jarvis:
         if stream:
             for o in self.registry.outputs:
                 o.flush()
-        self.history.append((user_text, reply))
+        self._record_turn(user_text, reply)
         return reply
 
     # -------------------------------------------------------------------- loop
@@ -577,7 +603,7 @@ class Jarvis:
                 try:
                     if skill is not None:
                         reply = skill.handle(text)
-                        self.history.append((text, reply))
+                        self._record_turn(text, reply)
                         if translate:
                             reply = self.translator.translate(reply, "en", lang)
                         self.registry.emit_all(reply)
@@ -787,8 +813,11 @@ def main():
         reasoning_model = hardware.recommend_reasoning_model()
         print(f"[jarvis] auto-sized reasoning model for this machine: {reasoning_model}")
     if not args.no_reasoning:
+        j.summary_model = reasoning_model
+        j.summarize_enabled = True
         j.register(ReasoningSkill(model=reasoning_model, history_ref=lambda: j.history,
-                                   mcp_ref=(lambda: mcp_skill) if mcp_skill is not None else None))
+                                   mcp_ref=(lambda: mcp_skill) if mcp_skill is not None else None,
+                                   summary_ref=lambda: j.history_summary))
 
     scanner = None
     if not args.no_self_modify:

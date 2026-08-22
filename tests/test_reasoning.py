@@ -128,6 +128,52 @@ def test_handle_works_fine_with_no_memories_recorded(tmp_path, monkeypatch):
     assert "facts you were previously told" not in captured["messages"][0]["content"]
 
 
+def test_handle_includes_summary_ref_in_system_prompt(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured.update(json)
+        return _FakeResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill(summary_ref=lambda: "Abi asked about tokenizers earlier.")
+    sk.handle("what were we talking about?")
+
+    system_message = captured["messages"][0]
+    assert "Abi asked about tokenizers earlier." in system_message["content"]
+    assert "Summary of earlier conversation" in system_message["content"]
+
+
+def test_handle_omits_summary_block_when_summary_is_empty(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured.update(json)
+        return _FakeResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill(summary_ref=lambda: "")
+    sk.handle("hello")
+
+    assert "Summary of earlier conversation" not in captured["messages"][0]["content"]
+
+
+def test_handle_works_fine_with_no_summary_ref(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured.update(json)
+        return _FakeResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill()
+    reply = sk.handle("hello")
+    assert reply == "ok"
+
+
 def test_max_tool_turns_is_a_hard_cap(monkeypatch):
     def fake_post(url, json, timeout):
         # the model always asks for another tool call -- never a final answer

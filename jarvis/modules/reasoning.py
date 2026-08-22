@@ -63,7 +63,7 @@ class ReasoningSkill(SkillModule):
 
     def __init__(self, model="qwen2.5:3b", host="http://localhost:11434",
                  system_prompt=None, history_ref=None, max_history=6, timeout=60,
-                 mcp_ref=None, max_tool_turns=4, memory_path=None):
+                 mcp_ref=None, max_tool_turns=4, memory_path=None, summary_ref=None):
         self.model = model
         self.host = host.rstrip("/")
         self.system_prompt = (system_prompt or (
@@ -79,6 +79,11 @@ class ReasoningSkill(SkillModule):
         # itself — modules don't reach back into the orchestrator.
         self.history_ref = history_ref
         self.max_history = max_history
+        # Callable returning Jarvis.history_summary — a running recap of
+        # everything older than history_ref()'s own max_history window (see
+        # modules/summarize.py and Jarvis._record_turn). None -> no recap
+        # available, same graceful-degradation pattern as every other ref.
+        self.summary_ref = summary_ref
         self.timeout = timeout
         # Callable returning the live MCPSkill instance (same lambda-ref
         # pattern as history_ref/security_ref elsewhere) — deferred so this
@@ -133,6 +138,11 @@ class ReasoningSkill(SkillModule):
                 system_content = system_content + "\n\n" + extra
         except Exception:
             pass  # memory is a nice-to-have; never block a reply on it
+        if self.summary_ref is not None:
+            summary = self.summary_ref()
+            if summary:
+                system_content = (system_content + "\n\nSummary of earlier "
+                                   f"conversation (older than recent history below): {summary}")
         messages = [{"role": "system", "content": system_content}]
         if self.history_ref is not None:
             for u, a in self.history_ref()[-self.max_history:]:
