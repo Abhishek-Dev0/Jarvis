@@ -28,6 +28,7 @@ try:
     from jarvis.modules.health import HealthCheckSkill
     from jarvis.modules.memory import MemorySkill
     from jarvis.modules.fileread import FileReadSkill
+    from jarvis.modules.vision import VisionSkill
     from jarvis.security import SecurityGate
     from jarvis import security
     from jarvis import self_modify
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.health import HealthCheckSkill
     from modules.memory import MemorySkill
     from modules.fileread import FileReadSkill
+    from modules.vision import VisionSkill
     from security import SecurityGate
     import security
     import self_modify
@@ -681,6 +683,11 @@ def main():
                          "silently on.")
     ap.add_argument("--self-modify-scan-interval", type=int, default=1800,
                     help="seconds between autonomous scan cycles (default 1800 = 30 min)")
+    ap.add_argument("--vision-model", default="moondream",
+                    help="Ollama vision model for \"describe image <path>\" (default: moondream, "
+                         "measured at ~2.5s/image on a 4GB-VRAM GPU once warm)")
+    ap.add_argument("--no-vision", action="store_true",
+                    help="disable the vision skill — read-only, no effect on any other capability")
     ap.add_argument("--no-mascot", action="store_true",
                     help="disable the animated terminal cat (modules/mascot.py) — purely "
                          "cosmetic, no effect on any actual capability")
@@ -766,6 +773,8 @@ def main():
                                  mcp_ref=(lambda: mcp_skill) if mcp_skill is not None else None))
     j.register(MemorySkill())
     j.register(FileReadSkill())
+    if not args.no_vision:
+        j.register(VisionSkill(model=args.vision_model))
     reasoning_model = args.reasoning_model
     if reasoning_model is None and (not args.no_reasoning or not args.no_self_modify):
         from jarvis.modules import hardware
