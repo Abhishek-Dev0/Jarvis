@@ -30,3 +30,7 @@ pytest
 # C++ compiler needed to install (unlike dlib-based alternatives)
 insightface
 opencv-python
+
+# document text extraction (modules/documents.py) — PDF and Word, no OCR
+pypdf
+python-docx

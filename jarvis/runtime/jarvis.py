@@ -29,6 +29,7 @@ try:
     from jarvis.modules.memory import MemorySkill
     from jarvis.modules.fileread import FileReadSkill
     from jarvis.modules.vision import VisionSkill
+    from jarvis.modules.documents import DocumentSkill
     from jarvis.security import SecurityGate
     from jarvis import security
     from jarvis import self_modify
@@ -47,6 +48,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.memory import MemorySkill
     from modules.fileread import FileReadSkill
     from modules.vision import VisionSkill
+    from modules.documents import DocumentSkill
     from security import SecurityGate
     import security
     import self_modify
@@ -775,6 +777,7 @@ def main():
     j.register(FileReadSkill())
     if not args.no_vision:
         j.register(VisionSkill(model=args.vision_model))
+    j.register(DocumentSkill())
     reasoning_model = args.reasoning_model
     if reasoning_model is None and (not args.no_reasoning or not args.no_self_modify):
         from jarvis.modules import hardware
