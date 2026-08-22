@@ -50,10 +50,18 @@ _SEC_DIR = os.path.join(_PKG_DIR, "data", "security")
 _PASS_HASH_PATH = os.path.join(_SEC_DIR, "passphrase.hash")
 _SALT_PATH = os.path.join(_SEC_DIR, "passphrase.salt")
 _VOICEPRINT_PATH = os.path.join(_SEC_DIR, "voiceprint.npy")
+_FACE_EMBEDDING_PATH = os.path.join(_SEC_DIR, "face_embedding.npy")
 
 _PBKDF2_ITERATIONS = 260_000
 VOICE_MATCH_THRESHOLD = 0.55  # cosine similarity; biased toward rejecting impostors over convenience
 _MIN_AUDIO_SAMPLES = 8000     # ~0.5s at 16kHz — below this, treat as "didn't catch anything"
+# ArcFace (insightface's w600k_r50, via the buffalo_l pack) embeddings are
+# already L2-normalized; 0.45 cosine similarity is a conservative starting
+# point for "same person" on this model, same "reject impostors over
+# convenience" bias as VOICE_MATCH_THRESHOLD — recalibrate against your own
+# camera/lighting if it's ever too strict or too loose in practice, there's
+# no universal correct value.
+FACE_MATCH_THRESHOLD = 0.45
 
 
 def _normalize(text: str) -> str:
@@ -73,6 +81,77 @@ def is_enrolled() -> bool:
 
 def has_voiceprint() -> bool:
     return os.path.exists(_VOICEPRINT_PATH)
+
+
+def has_face() -> bool:
+    return os.path.exists(_FACE_EMBEDDING_PATH)
+
+
+_face_app = None  # lazy-loaded insightface FaceAnalysis, shared across calls
+
+
+def _get_face_app():
+    """insightface's FaceAnalysis (buffalo_l pack): detection + a
+    512-dim ArcFace recognition embedding per face, all ONNX — no C++
+    compiler needed to install (unlike dlib-based alternatives), which
+    matters on a Windows dev box that may not have build tools. Weights
+    download once from insightface's own release assets, then cache under
+    ~/.insightface/, same one-time-fetch-then-offline shape as every other
+    model in this project.
+    """
+    global _face_app
+    if _face_app is None:
+        from insightface.app import FaceAnalysis
+        _face_app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+        _face_app.prepare(ctx_id=0, det_size=(320, 320))
+    return _face_app
+
+
+def _face_embed(frame) -> np.ndarray | None:
+    """frame: a BGR image array (e.g. straight from cv2.VideoCapture.read()).
+    Returns the L2-normalized embedding of the largest detected face, or
+    None if no face was found — never raises on 'no face in frame', that's
+    an expected, common outcome (bad angle, no one there yet), not an error."""
+    faces = _get_face_app().get(frame)
+    if not faces:
+        return None
+    largest = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+    return largest.normed_embedding
+
+
+def capture_frame(camera_index: int = 0):
+    """One frame from a local webcam via OpenCV. Raises RuntimeError if the
+    camera can't be opened or a frame can't be read — callers decide how to
+    surface that (this module doesn't know if it's running interactively or
+    headless)."""
+    import cv2
+    cap = cv2.VideoCapture(camera_index)
+    try:
+        if not cap.isOpened():
+            raise RuntimeError(f"couldn't open camera {camera_index}")
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            raise RuntimeError(f"couldn't read a frame from camera {camera_index}")
+        return frame
+    finally:
+        cap.release()
+
+
+def enroll_face(frame=None, camera_index: int = 0) -> None:
+    """One-time setup for the face factor. Overwrites any prior face
+    enrollment. frame: pass a captured BGR image directly, or leave None to
+    capture one now from `camera_index`. Deliberately a separate, explicit
+    call from enroll() (passphrase/voice) — this is its own biometric
+    factor with its own consent moment, not bundled silently into the
+    others."""
+    if frame is None:
+        frame = capture_frame(camera_index)
+    embedding = _face_embed(frame)
+    if embedding is None:
+        raise ValueError("no face detected in the captured frame — try again with better lighting/framing")
+    os.makedirs(_SEC_DIR, exist_ok=True)
+    np.save(_FACE_EMBEDDING_PATH, embedding)
+    print("[security] face enrolled.")
 
 
 def _patch_speechbrain_windows_lazy_import_bug() -> None:
@@ -247,6 +326,36 @@ class SecurityGate:
             expected = f.read()
         return hmac.compare_digest(_hash_passphrase(attempt, salt), expected)
 
+    def face_login(self, camera_index: int = 0) -> bool:
+        """On-demand, explicit face check — grants admin on a face match
+        ALONE, no passphrase. This is deliberately single-factor, weaker
+        than authorize()'s two-factor passphrase+voice check: Abi asked for
+        it specifically as a discretion option (2026-08-22) — a way to
+        become admin without speaking a passphrase out loud in public.
+        That's a real, considered tradeoff he chose, not an oversight; if
+        you're calling this from new code, that tradeoff is his to make
+        again for that use case, not something to default to elsewhere.
+
+        Returns False (not an exception) for "no face enrolled", "camera
+        unavailable", "no face in frame", and "face didn't match" alike —
+        callers don't need to distinguish those to know the answer is no.
+        """
+        if not has_face():
+            return False
+        try:
+            frame = capture_frame(camera_index)
+            embedding = _face_embed(frame)
+        except Exception as e:
+            print(f"[security] face_login camera/detection error: {e}")
+            return False
+        if embedding is None:
+            return False
+        score = float(np.dot(embedding, np.load(_FACE_EMBEDDING_PATH)))
+        matched = score >= FACE_MATCH_THRESHOLD
+        if matched:
+            print(f"[security] face matched (score={score:.2f}).")
+        return matched
+
     def wake_challenge(self, admin_name: str, affirmative_phrases=None) -> bool:
         """Called once at voice-session start. If the very first thing heard
         matches the enrolled voiceprint, asks "<admin_name>, are you the
@@ -294,7 +403,10 @@ class SecurityGate:
         audio = None
 
         if voice_mode:
-            self._say(f"Verification required for {reason}. Please say your passphrase.")
+            if reason == "become admin":
+                self._say("Admin control initiated. Please say the passphrase.")
+            else:
+                self._say(f"Verification required for {reason}. Please say your passphrase.")
             audio = self.mic_engine.record_until_silence()
             if audio.size < _MIN_AUDIO_SAMPLES:
                 self._say("Denied — didn't catch anything.")
@@ -330,7 +442,7 @@ class SecurityGate:
                     return False
                 print(f"[security] voice matched (score={score:.2f}).")
 
-        self._say("Verified.")
+        self._say("Full capabilities online." if reason == "become admin" else "Verified.")
         return True
 
 
@@ -345,6 +457,13 @@ def main():
              "JARVIS with --voice (especially the background launcher, which has no "
              "keyboard to type into); that same recording also sets your voiceprint.")
     enroll_p.add_argument("--whisper-model", default="base.en")
+    enroll_p.add_argument(
+        "--face", action="store_true",
+        help="also enroll a face embedding via webcam — lets \"recognize me\" grant admin "
+             "on a face match alone, no spoken passphrase, for when you don't want to say "
+             "it out loud in public. This is a separate, weaker (single-factor) path than "
+             "the passphrase+voice check; see security.SecurityGate.face_login's docstring.")
+    enroll_p.add_argument("--camera-index", type=int, default=0)
     args = ap.parse_args()
 
     if args.cmd == "enroll":
@@ -361,6 +480,12 @@ def main():
             enroll(voice_audio=audio, transcribe_fn=engine.transcribe)
         else:
             enroll()
+
+        if args.face:
+            print("[security] loading face recognition (first run downloads the model, "
+                  "cached after)...")
+            print(f"[security] look at camera {args.camera_index} now...")
+            enroll_face(camera_index=args.camera_index)
 
 
 if __name__ == "__main__":

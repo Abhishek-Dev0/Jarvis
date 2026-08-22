@@ -106,6 +106,22 @@ serial command) goes through `security.py`'s `SecurityGate` first.
 
 ## Running fully offline
 
+## Getting started interactively
+
+Double-click `Start JARVIS.bat` (repo root) — voice mode, output visible in that window.
+`run_jarvis.bat` is a *different* file used only by `Launch JARVIS.vbs` for a silent
+background start (output goes to `data/logs/jarvis.log` instead of a console, since there
+isn't one) — running it directly looks like nothing is happening, on purpose.
+
+First run: `python -m jarvis.security enroll` sets your passphrase (add `--voice` for a
+spoken enrollment, `--face` to also enroll a face embedding via webcam). Three ways to
+become admin once enrolled: say the wake-time voiceprint challenge automatically, say
+"I'm the admin" any time mid-session (asks for the passphrase), or say "recognize me" for
+a face-only check (weaker — single factor — but doesn't require saying anything out loud;
+see `security.SecurityGate.face_login`'s docstring for that tradeoff).
+
+## Running fully offline
+
 Every model here downloads its weights **once** and runs offline forever after — none of
 it calls an API at inference time. `python -m jarvis.vendor_models status` shows what's
 already downloaded and where (Piper/Kokoro voices, faster-whisper's Hugging Face cache,

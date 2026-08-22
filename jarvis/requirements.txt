@@ -25,3 +25,8 @@ nvidia-cudnn-cu12
 
 # self-modify pipeline's sandboxed test run (self_modify.py)
 pytest
+
+# face recognition, third admin-auth factor (security.py) — ONNX-based, no
+# C++ compiler needed to install (unlike dlib-based alternatives)
+insightface
+opencv-python

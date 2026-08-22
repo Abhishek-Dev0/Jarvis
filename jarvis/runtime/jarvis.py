@@ -50,6 +50,15 @@ except ImportError:  # pragma: no cover - legacy direct execution
 _SHUTDOWN_PHRASES_EN = {"quit", "exit", "shutdown", "shut down", "power off",
                          "turn off", "stop jarvis", "goodbye jarvis"}
 _AFFIRMATIVE_PHRASES_EN = {"yes", "yeah", "yep", "yup", "correct", "affirmative"}
+# "I'm the admin" (mid-session, explicit) vs. wake_challenge's automatic
+# first-utterance voice match — Abi asked for both paths on 2026-08-22:
+# announce yourself any time, not just at session start. Apostrophe is
+# stripped by _normalize_phrase, hence "im"/"i am" both listed.
+_ADMIN_TRIGGER_PHRASES_EN = {"im the admin", "i am the admin"}
+# "recognize me" — the face-only admin path, for not saying the passphrase
+# out loud in public. See security.SecurityGate.face_login's docstring for
+# why this is deliberately weaker (single-factor) than the passphrase path.
+_FACE_LOGIN_PHRASES_EN = {"recognize me", "check my face", "face login", "admin face login"}
 
 
 def _normalize_phrase(text: str) -> str:
@@ -116,28 +125,34 @@ class Jarvis:
         self.is_admin = False
         self.shutdown_phrases = set(_SHUTDOWN_PHRASES_EN)
         self.affirmative_phrases = set(_AFFIRMATIVE_PHRASES_EN)
+        self.admin_trigger_phrases = set(_ADMIN_TRIGGER_PHRASES_EN)
+        self.face_login_phrases = set(_FACE_LOGIN_PHRASES_EN)
 
     def refresh_multilingual_phrases(self) -> None:
-        """Extends shutdown/affirmative phrase matching into every supported
-        language via self.translator. Safe to call with no translator (no-op)
-        or call again later if the translator becomes available."""
+        """Extends shutdown/affirmative/admin-trigger phrase matching into
+        every supported language via self.translator. Safe to call with no
+        translator (no-op) or call again later if the translator becomes
+        available."""
         if self.translator is None:
             return
         try:
             from jarvis.modules.voice import SUPPORTED_LANGUAGES
         except ImportError:  # pragma: no cover - legacy direct execution
             from modules.voice import SUPPORTED_LANGUAGES
+        phrase_sets = (
+            (_SHUTDOWN_PHRASES_EN, self.shutdown_phrases),
+            (_AFFIRMATIVE_PHRASES_EN, self.affirmative_phrases),
+            (_ADMIN_TRIGGER_PHRASES_EN, self.admin_trigger_phrases),
+            (_FACE_LOGIN_PHRASES_EN, self.face_login_phrases),
+        )
         for lang in SUPPORTED_LANGUAGES:
             if lang == "en":
                 continue
-            for phrase in _SHUTDOWN_PHRASES_EN:
-                translated = self.translator.translate(phrase, "en", lang)
-                if translated:
-                    self.shutdown_phrases.add(_normalize_phrase(translated))
-            for phrase in _AFFIRMATIVE_PHRASES_EN:
-                translated = self.translator.translate(phrase, "en", lang)
-                if translated:
-                    self.affirmative_phrases.add(_normalize_phrase(translated))
+            for source_phrases, target_set in phrase_sets:
+                for phrase in source_phrases:
+                    translated = self.translator.translate(phrase, "en", lang)
+                    if translated:
+                        target_set.add(_normalize_phrase(translated))
 
     # ------------------------------------------------------------------ setup
 
@@ -236,6 +251,15 @@ class Jarvis:
         print(self.registry.summary())
         print("=" * 60)
 
+        # The "systems online" moment Abi asked for on 2026-08-22 — printed
+        # either way (works in console mode, no TTS needed), spoken too
+        # when a speech output is registered. Deliberately just a greeting,
+        # not a security check: admin recognition (voice wake_challenge,
+        # "I'm the admin", "recognize me") all still happen through the
+        # normal gated paths below/in the main loop, nothing here bypasses
+        # any of that.
+        self.registry.emit_all("Systems online. How can I help you, sir?")
+
         # Once, at session start: if the first thing heard matches the
         # enrolled voiceprint, offer the admin login. Silent no-op if no mic,
         # nothing enrolled, or the voice doesn't match — see
@@ -285,6 +309,26 @@ class Jarvis:
                         self.registry.emit_all("Shutting down.")
                         break
                     self.registry.emit_all("Verification failed — staying online.")
+                    continue
+
+                if _normalize_phrase(text) in self.admin_trigger_phrases:
+                    if self.is_admin:
+                        self.registry.emit_all("Already recognized as admin.")
+                    elif self.security.authorize("become admin"):
+                        self.is_admin = True
+                        # authorize() already said "Full capabilities online."
+                    else:
+                        self.registry.emit_all("Access denied.")
+                    continue
+
+                if _normalize_phrase(text) in self.face_login_phrases:
+                    if self.is_admin:
+                        self.registry.emit_all("Already recognized as admin.")
+                    elif self.security.face_login():
+                        self.is_admin = True
+                        self.registry.emit_all("Admin recognized. Initializing full capabilities.")
+                    else:
+                        self.registry.emit_all("Face not recognized. Access denied.")
                     continue
 
                 skill = self.registry.find_skill(text)
@@ -394,6 +438,13 @@ def main():
     ap.add_argument("--self-modify-scan-interval", type=int, default=1800,
                     help="seconds between autonomous scan cycles (default 1800 = 30 min)")
     args = ap.parse_args()
+
+    print("Analyzing system specifications...")
+    from jarvis.modules import hardware
+    _profile = hardware.detect()
+    gpu_desc = f"{_profile['gpu_name']} ({_profile['vram_gb']} GB VRAM)" if _profile["has_cuda"] else "no CUDA GPU"
+    print(f"  CPU: {_profile['cpu_cores']} cores / {_profile['cpu_threads']} threads   "
+          f"RAM: {_profile['ram_gb']} GB   GPU: {gpu_desc}")
 
     j = Jarvis(ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device,
                chat_mode=args.chat_mode, admin_name=args.admin_name)
