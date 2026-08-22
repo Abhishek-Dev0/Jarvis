@@ -30,6 +30,7 @@ try:
     from jarvis.security import SecurityGate
     from jarvis import security
     from jarvis import self_modify
+    from jarvis import telemetry
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
     from modules.base import Registry
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from security import SecurityGate
     import security
     import self_modify
+    import telemetry
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
 # SecurityGate) rather than by input modules swallowing them, so verification
@@ -562,6 +564,8 @@ class Jarvis:
                     continue
 
                 skill = self.registry.find_skill(text)
+                component = skill.name if skill is not None else "reasoning-or-core"
+                turn_start = time.monotonic()
                 try:
                     if skill is not None:
                         reply = skill.handle(text)
@@ -584,6 +588,9 @@ class Jarvis:
                         else:
                             print("jarvis> ", end="", flush=True)
                             self.respond(text, stream=True)
+                    telemetry.log_event(component, "handle_turn",
+                                        duration_ms=(time.monotonic() - turn_start) * 1000,
+                                        outcome="ok")
                 except Exception as e:
                     # A skill or the model raising used to crash the whole
                     # process (find_skill() already guards matches(), but
@@ -591,8 +598,10 @@ class Jarvis:
                     # one bad turn doesn't end the session, and logged so
                     # self_modify.py's autonomous scanner has something real
                     # to work from.
-                    source_name = skill.name if skill is not None else "reasoning-or-core"
-                    self_modify.log_exception(f"turn:{source_name}", e)
+                    self_modify.log_exception(f"turn:{component}", e)
+                    telemetry.log_event(component, "handle_turn", severity="error",
+                                        duration_ms=(time.monotonic() - turn_start) * 1000,
+                                        outcome="error", error=str(e))
                     print(f"[jarvis] error handling that turn: {e}")
                     self.registry.emit_all("Something went wrong handling that — see the log.")
 
