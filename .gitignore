@@ -44,3 +44,8 @@ jarvis/data/self_modify/
 # local backup of downloaded model weights (jarvis/vendor_models.py) — several
 # GB, purely a local durability copy, never belongs in git
 /vendor/
+
+# launcher shortcuts — hold absolute, machine-specific paths, regenerate
+# per machine rather than commit (Start JARVIS.bat + assets/jarvis_cat.ico
+# stay in git; the .lnk files pointing at their absolute path don't)
+*.lnk

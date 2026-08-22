@@ -95,10 +95,16 @@ analysis, reasoning, self-modify).
 
 ## Getting started interactively
 
-Double-click `Start JARVIS.bat` (repo root) — voice mode, output visible in that window.
-`run_jarvis.bat` is a *different* file used only by `Launch JARVIS.vbs` for a silent
-background start (output goes to `jarvis/data/logs/jarvis.log` instead of a console,
-since there isn't one) — running it directly looks like nothing is happening, on purpose.
+Double-click `Start JARVIS.bat` (repo root), or the cat-icon shortcut on the Desktop / at
+the repo root (`Start JARVIS.lnk` — machine-specific, gitignored). Voice mode, output
+visible in that window, with a small animated ASCII cat (`jarvis/modules/mascot.py`) that
+flaps its mouth in sync with actual TTS playback and does a short tail-wag after each
+reply — purely cosmetic, `--no-mascot` disables it. Say "switch to eve" or "switch to
+jarvis" any time to change both the voice persona and the mascot — ungated, it's cosmetic,
+not security-relevant. `run_jarvis.bat` is a *different* file used only by
+`Launch JARVIS.vbs` for a silent background start (output goes to
+`jarvis/data/logs/jarvis.log` instead of a console, since there isn't one) — running it
+directly looks like nothing is happening, on purpose.
 
 First run: JARVIS itself offers to set up your admin passphrase the moment it starts —
 no separate command needed, and the passphrase never passes through anything but you and

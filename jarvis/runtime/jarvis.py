@@ -70,6 +70,10 @@ _FACE_LOGIN_PHRASES_EN = {"recognize me", "check my face", "face login", "admin 
 # 2026-08-22 request) safe to build at all.
 _CHANGE_PASSPHRASE_PHRASES_EN = {"change the phrase", "change the passphrase",
                                   "change my passphrase", "reset the passphrase"}
+# Cosmetic persona switch (voice + mascot) — ungated on purpose, anyone can
+# ask for it, same as picking a UI theme. Not a security-relevant action.
+_SWITCH_TO_EVE_PHRASES_EN = {"switch to eve", "become eve", "use eve", "eve persona"}
+_SWITCH_TO_JARVIS_PHRASES_EN = {"switch to jarvis", "become jarvis", "use jarvis", "jarvis persona"}
 
 
 def _normalize_phrase(text: str) -> str:
@@ -139,6 +143,12 @@ class Jarvis:
         self.admin_trigger_phrases = set(_ADMIN_TRIGGER_PHRASES_EN)
         self.face_login_phrases = set(_FACE_LOGIN_PHRASES_EN)
         self.change_passphrase_phrases = set(_CHANGE_PASSPHRASE_PHRASES_EN)
+        self.switch_eve_phrases = set(_SWITCH_TO_EVE_PHRASES_EN)
+        self.switch_jarvis_phrases = set(_SWITCH_TO_JARVIS_PHRASES_EN)
+        # None unless main() wires one up (modules/mascot.py) — a cosmetic
+        # terminal companion, not a capability. Callers check for None
+        # before using it (see run()).
+        self.mascot = None
 
     def refresh_multilingual_phrases(self) -> None:
         """Extends shutdown/affirmative/admin-trigger phrase matching into
@@ -157,6 +167,8 @@ class Jarvis:
             (_ADMIN_TRIGGER_PHRASES_EN, self.admin_trigger_phrases),
             (_FACE_LOGIN_PHRASES_EN, self.face_login_phrases),
             (_CHANGE_PASSPHRASE_PHRASES_EN, self.change_passphrase_phrases),
+            (_SWITCH_TO_EVE_PHRASES_EN, self.switch_eve_phrases),
+            (_SWITCH_TO_JARVIS_PHRASES_EN, self.switch_jarvis_phrases),
         )
         for lang in SUPPORTED_LANGUAGES:
             if lang == "en":
@@ -330,6 +342,20 @@ class Jarvis:
         self._enroll_passphrase_live()
         self.registry.emit_all("Passphrase changed.")
 
+    def _switch_persona(self, persona: str) -> None:
+        """Cosmetic — voice identity + mascot appearance, not gated (see
+        the trigger phrase constants' comment for why). Updates whichever
+        of the two is actually present; either can be missing (console
+        mode has no TTS engine, --no-mascot or a headless run has no
+        mascot) without the other failing."""
+        for output in self.registry.outputs:
+            engine = getattr(output, "engine", None)
+            if engine is not None and hasattr(engine, "persona"):
+                engine.persona = persona
+        if self.mascot is not None:
+            self.mascot.switch(persona)
+        self.registry.emit_all(f"Switched to {persona}.")
+
     def run(self):
         if not self.registry.inputs:
             raise RuntimeError("no input module registered")
@@ -437,6 +463,13 @@ class Jarvis:
                     self._handle_change_passphrase()
                     continue
 
+                if _normalize_phrase(text) in self.switch_eve_phrases:
+                    self._switch_persona("eve")
+                    continue
+                if _normalize_phrase(text) in self.switch_jarvis_phrases:
+                    self._switch_persona("jarvis")
+                    continue
+
                 skill = self.registry.find_skill(text)
                 try:
                     if skill is not None:
@@ -471,6 +504,9 @@ class Jarvis:
                     self_modify.log_exception(f"turn:{source_name}", e)
                     print(f"[jarvis] error handling that turn: {e}")
                     self.registry.emit_all("Something went wrong handling that — see the log.")
+
+                if self.mascot is not None:
+                    self.mascot.idle_flourish()
         finally:
             self.registry.teardown_all()
             print("\n[jarvis] shutdown")
@@ -543,6 +579,9 @@ def main():
                          "silently on.")
     ap.add_argument("--self-modify-scan-interval", type=int, default=1800,
                     help="seconds between autonomous scan cycles (default 1800 = 30 min)")
+    ap.add_argument("--no-mascot", action="store_true",
+                    help="disable the animated terminal cat (modules/mascot.py) — purely "
+                         "cosmetic, no effect on any actual capability")
     args = ap.parse_args()
 
     print("Analyzing system specifications...")
@@ -556,6 +595,10 @@ def main():
                chat_mode=args.chat_mode, admin_name=args.admin_name)
     j.gen_kwargs["temperature"] = args.temperature
     j.load_model()
+
+    if not args.no_mascot:
+        from jarvis.modules.mascot import CatMascot
+        j.mascot = CatMascot(persona=args.persona)
 
     if args.voice:
         from jarvis.modules.voice import WhisperSTTEngine, PersonaTTSEngine
@@ -578,7 +621,7 @@ def main():
             whisper_engine = WhisperSTTEngine(model_size=whisper_model, device="cpu")
         persona_engine = PersonaTTSEngine(persona=args.persona, default_lang=args.lang)
         j.register(SpeechInput(engine=whisper_engine))
-        j.register(SpeechOutput(engine=persona_engine))
+        j.register(SpeechOutput(engine=persona_engine, mascot=j.mascot))
         # mic+tts here mean authorize() prompts by voice and listens for the
         # passphrase instead of calling getpass() — required since a
         # background launch (see launch_jarvis.vbs) has no stdin to read.

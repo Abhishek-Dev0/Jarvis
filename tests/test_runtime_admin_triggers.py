@@ -27,6 +27,34 @@ def test_change_passphrase_phrases_present_and_isolated():
     assert not (j.change_passphrase_phrases & j.admin_trigger_phrases)
 
 
+def test_switch_persona_phrases_present_and_isolated():
+    j = Jarvis()
+    assert _normalize_phrase("switch to eve") in j.switch_eve_phrases
+    assert _normalize_phrase("switch to jarvis") in j.switch_jarvis_phrases
+    assert not (j.switch_eve_phrases & j.switch_jarvis_phrases)
+    assert not (j.switch_eve_phrases & j.shutdown_phrases)
+
+
+def test_switch_persona_updates_mascot_and_tts_engine_without_gating():
+    from jarvis.modules.mascot import CatMascot
+    from jarvis.modules.builtin import SpeechOutput
+
+    j = Jarvis()
+    j.mascot = CatMascot(enabled=False)
+
+    class FakeTTSEngine:
+        persona = "jarvis"
+
+    engine = FakeTTSEngine()
+    j.register(SpeechOutput(engine=engine, mascot=j.mascot))
+
+    assert j.is_admin is False  # ungated -- no admin needed
+    j._switch_persona("eve")
+    assert engine.persona == "eve"
+    assert j.mascot.persona == "eve"
+    assert j.is_admin is False  # still not a security-relevant action
+
+
 def test_handle_change_passphrase_denies_without_admin_or_credentials(tmp_path, monkeypatch):
     from jarvis import security
     sec_dir = tmp_path / "security"

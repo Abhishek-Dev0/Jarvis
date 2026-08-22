@@ -106,10 +106,17 @@ serial command) goes through `security.py`'s `SecurityGate` first.
 
 ## Getting started interactively
 
-Double-click `Start JARVIS.bat` (repo root) — voice mode, output visible in that window.
-`run_jarvis.bat` is a *different* file used only by `Launch JARVIS.vbs` for a silent
-background start (output goes to `data/logs/jarvis.log` instead of a console, since there
-isn't one) — running it directly looks like nothing is happening, on purpose.
+Double-click `Start JARVIS.bat` (repo root), or the cat-icon shortcut on the Desktop / at
+the repo root (`Start JARVIS.lnk` — machine-specific, gitignored; regenerate with a script
+using `win32com.client.Dispatch("WScript.Shell")` pointed at `assets/jarvis_cat.ico` if you
+move the repo). Voice mode, output visible in that window, with a small animated ASCII cat
+(`modules/mascot.py`) that flaps its mouth in sync with actual TTS playback and does a short
+tail-wag after each reply — purely cosmetic, `--no-mascot` disables it. Say "switch to eve"
+or "switch to jarvis" any time to change both the voice persona and the mascot — ungated,
+it's a cosmetic choice, not a security-relevant one. `run_jarvis.bat` is a *different* file
+used only by `Launch JARVIS.vbs` for a silent background start (output goes to
+`data/logs/jarvis.log` instead of a console, since there isn't one) — running it directly
+looks like nothing is happening, on purpose.
 
 First run: `python -m jarvis.security enroll` sets your passphrase (add `--voice` for a
 spoken enrollment, `--face` to also enroll a face embedding via webcam). Three ways to

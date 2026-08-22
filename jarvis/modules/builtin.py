@@ -173,25 +173,36 @@ class SpeechOutput(OutputModule):
     name = "speech_out"
     description = "text to speech"
 
-    def __init__(self, engine=None):
+    def __init__(self, engine=None, mascot=None):
         self.engine = engine
         self._buf: list[str] = []
         # Jarvis.run() sets this before emitting a reply, from whatever
         # language Whisper detected in the user's speech (see SpeechInput
         # .last_language). Engines that only speak one language ignore it.
         self.current_lang: str | None = None
+        # Optional modules.mascot.CatMascot — when set, flaps the mascot's
+        # mouth for the actual duration of each speak() call instead of
+        # just calling the engine directly. None is a normal, silent no-op
+        # (voice works exactly the same with no mascot attached).
+        self.mascot = mascot
 
     @property
     def available(self):
         return self.engine is not None
 
+    def _speak(self, text):
+        if self.mascot is not None:
+            self.mascot.talk_while(self.engine.speak, text, lang=self.current_lang)
+        else:
+            self.engine.speak(text, lang=self.current_lang)
+
     def emit(self, text):
-        self.engine.speak(text, lang=self.current_lang)
+        self._speak(text)
 
     def emit_stream(self, chunk):
         self._buf.append(chunk)
 
     def flush(self):
         if self._buf:
-            self.engine.speak("".join(self._buf), lang=self.current_lang)
+            self._speak("".join(self._buf))
             self._buf.clear()
