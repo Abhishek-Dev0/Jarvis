@@ -147,19 +147,35 @@ def _face_embed(frame) -> np.ndarray | None:
     return largest.normed_embedding
 
 
-def capture_frame(camera_index: int = 0):
+def capture_frame(camera_index: int = 0, warmup_attempts: int = 15, warmup_delay: float = 0.15):
     """One frame from a local webcam via OpenCV. Raises RuntimeError if the
     camera can't be opened or a frame can't be read — callers decide how to
     surface that (this module doesn't know if it's running interactively or
-    headless)."""
+    headless).
+
+    warmup_attempts/warmup_delay: reading a frame immediately after
+    VideoCapture opens routinely fails on real hardware — the sensor
+    hasn't actually started streaming yet — with Media Foundation's
+    ERROR_NOT_READY (HRESULT 0x80070015). Found by actually testing
+    against a real webcam, not assumed: the fix is a short retry loop, not
+    a longer one-shot wait, since the exact warm-up time varies by camera/
+    driver. ~15 * 0.15s = 2.25s worst case before giving up.
+    """
+    import time
     import cv2
     cap = cv2.VideoCapture(camera_index)
     try:
         if not cap.isOpened():
             raise RuntimeError(f"couldn't open camera {camera_index}")
-        ok, frame = cap.read()
+        ok, frame = False, None
+        for _ in range(warmup_attempts):
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                break
+            time.sleep(warmup_delay)
         if not ok or frame is None:
-            raise RuntimeError(f"couldn't read a frame from camera {camera_index}")
+            raise RuntimeError(f"couldn't read a frame from camera {camera_index} "
+                                f"(gave up after {warmup_attempts} attempts)")
         return frame
     finally:
         cap.release()
@@ -244,16 +260,30 @@ _verifier = None  # lazy-loaded speechbrain model, shared across calls in this p
 def _get_verifier():
     global _verifier
     if _verifier is None:
+        import torch
         from speechbrain.inference.speaker import SpeakerRecognition
         from speechbrain.utils.fetching import LocalStrategy
         _patch_speechbrain_windows_lazy_import_bug()
         # Windows needs Developer Mode or admin to create symlinks; COPY
         # avoids that requirement (costs a bit of extra disk, not speed —
         # this only runs once, the model is cached after).
+        #
+        # run_opts={"device": ...} matters more than it looks: left
+        # unset, speechbrain's own internal default resolves to the bare
+        # string "cuda" (no index) when CUDA is available, and something
+        # downstream in speechbrain splits that on ":" expecting exactly
+        # two parts ("cuda:0") — with just "cuda" that unpack raises and
+        # gets caught, printing "Could not parse CUDA device string
+        # 'cuda': ... Falling back to device 0" and silently continuing on
+        # *some* device without it ever being clear which. Passing a fully
+        # -qualified "cuda:0" ourselves sidesteps that entirely — found by
+        # actually running this against a real GPU, not assumed.
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
         _verifier = SpeakerRecognition.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
             savedir=os.path.join(_SEC_DIR, "_speechbrain_cache"),
             local_strategy=LocalStrategy.COPY,
+            run_opts={"device": device},
         )
     return _verifier
 
