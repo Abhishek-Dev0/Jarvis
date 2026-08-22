@@ -600,6 +600,16 @@ class Jarvis:
                 skill = self.registry.find_skill(text)
                 component = skill.name if skill is not None else "reasoning-or-core"
                 turn_start = time.monotonic()
+                # A real gap surfaced live: skill.handle() (reasoning
+                # included -- it's a SkillModule, see modules/reasoning.py)
+                # returns one complete string with zero feedback while it
+                # runs, and a real Ollama turn can take anywhere from ~2s
+                # to well over a minute (see telemetry's own recorded
+                # durations). Without this, that whole stretch looks
+                # identical to a hang. The streamed core-model path below
+                # already shows progress token-by-token, so this line is
+                # what's missing there, not what's missing here.
+                print("[jarvis] thinking...")
                 try:
                     if skill is not None:
                         reply = skill.handle(text)
@@ -768,7 +778,7 @@ def main():
             print(f"[jarvis] whisper on {whisper_device} failed ({e}), falling back to cpu")
             whisper_engine = WhisperSTTEngine(model_size=whisper_model, device="cpu")
         persona_engine = PersonaTTSEngine(persona=args.persona, default_lang=args.lang)
-        j.register(SpeechInput(engine=whisper_engine))
+        j.register(SpeechInput(engine=whisper_engine, mascot=j.mascot))
         j.register(SpeechOutput(engine=persona_engine, mascot=j.mascot))
         # mic+tts here mean authorize() prompts by voice and listens for the
         # passphrase instead of calling getpass() — required since a

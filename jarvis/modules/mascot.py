@@ -56,6 +56,12 @@ _FRAMES = {
             " /\\_/\\      \n( o.o )     \n > ^ <      \n",
             " /\\_/\\      \n( o.o )     \n > 3 <      \n",
         ],
+        # Wide, alert eyes -- played while the mic is actually recording,
+        # so there's a visible answer to "is it listening right now or not".
+        "listen": [
+            " /\\_/\\      \n( o.o )     \n > ^ <      \n",
+            " /\\_/\\      \n( O.O )     \n > ^ <      \n",
+        ],
     },
     "eve": {
         "idle": [
@@ -66,6 +72,10 @@ _FRAMES = {
         "talk": [
             " /\\_/\\)     \n( o.o )     \n > . <      \n",
             " /\\_/\\)     \n( o.o )     \n > 3 <      \n",
+        ],
+        "listen": [
+            " /\\_/\\)     \n( o.o )     \n > . <      \n",
+            " /\\_/\\)     \n( O.O )     \n > . <      \n",
         ],
     },
 }
@@ -109,6 +119,35 @@ class CatMascot:
             for frame in frames:
                 self._draw(frame)
                 time.sleep(delay)
+
+    def listen_while(self, fn, *args, delay: float = 0.25, **kwargs):
+        """Runs fn(*args, **kwargs) (e.g. a blocking mic-record call) while
+        showing the mascot's alert-eyes "listening" frames; returns fn's
+        result. Same animate-in-a-thread/restore-idle-after shape as
+        talk_while() -- kept as a separate method rather than a shared
+        "loop these frames" helper because the two are conceptually
+        distinct states (recording audio in vs. speaking audio out), and a
+        future third state should read the same way, not be squeezed into
+        one parameterized method."""
+        frames = _FRAMES[self.persona]["listen"]
+        self._drawn = False
+        stop = threading.Event()
+
+        def _animate():
+            i = 0
+            while not stop.is_set():
+                self._draw(frames[i % len(frames)])
+                i += 1
+                stop.wait(delay)
+
+        thread = threading.Thread(target=_animate, daemon=True)
+        thread.start()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            stop.set()
+            thread.join(timeout=1.0)
+            self._draw(_FRAMES[self.persona]["idle"][0])
 
     def talk_while(self, fn, *args, delay: float = 0.15, **kwargs):
         """Runs fn(*args, **kwargs) (e.g. a blocking TTS speak() call) while

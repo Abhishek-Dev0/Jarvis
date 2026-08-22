@@ -137,8 +137,13 @@ class SpeechInput(InputModule):
     name = "speech_in"
     description = "speech to text"
 
-    def __init__(self, engine=None):
+    def __init__(self, engine=None, mascot=None):
         self.engine = engine
+        # Optional modules.mascot.CatMascot, same wiring pattern as
+        # SpeechOutput's own mascot param below -- when set, shows the
+        # mascot's alert-eyes "listening" frames for the real duration the
+        # mic is actually recording. None is a silent no-op.
+        self.mascot = mascot
 
     @property
     def available(self):
@@ -148,7 +153,16 @@ class SpeechInput(InputModule):
         pass
 
     def listen(self):
-        audio = self.engine.record_until_silence()
+        # Printed unconditionally (not just when a mascot is attached) --
+        # this is the actual answer to "how do I know it's listening right
+        # now", the mascot is a cosmetic bonus on top of it. See
+        # record_until_silence()'s own VAD loop for what "recording" means
+        # here: it starts the instant the mic stream opens, right below.
+        print("[jarvis] listening...")
+        if self.mascot is not None:
+            audio = self.mascot.listen_while(self.engine.record_until_silence)
+        else:
+            audio = self.engine.record_until_silence()
         return self.engine.transcribe(audio)
 
     @property
