@@ -25,6 +25,7 @@ try:
     from jarvis.modules.hardware_io import HardwareSkill
     from jarvis.modules.mcp_client import MCPSkill
     from jarvis.modules.market_analysis import MarketAnalysisSkill
+    from jarvis.modules.health import HealthCheckSkill
     from jarvis.security import SecurityGate
     from jarvis import security
     from jarvis import self_modify
@@ -38,6 +39,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.hardware_io import HardwareSkill
     from modules.mcp_client import MCPSkill
     from modules.market_analysis import MarketAnalysisSkill
+    from modules.health import HealthCheckSkill
     from security import SecurityGate
     import security
     import self_modify
@@ -747,6 +749,8 @@ def main():
         mcp_skill = MCPSkill(config_path=args.mcp_config,
                               security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin)
         j.register(mcp_skill)
+    j.register(HealthCheckSkill(jarvis_ref=lambda: j,
+                                 mcp_ref=(lambda: mcp_skill) if mcp_skill is not None else None))
     reasoning_model = args.reasoning_model
     if reasoning_model is None and (not args.no_reasoning or not args.no_self_modify):
         from jarvis.modules import hardware
