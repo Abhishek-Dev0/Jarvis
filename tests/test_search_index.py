@@ -93,10 +93,54 @@ def test_search_ranks_the_more_similar_record_first(tmp_path, monkeypatch):
     assert results[0]["score"] > results[1]["score"]
 
 
+def test_search_reuses_normalized_index_between_queries(tmp_path, monkeypatch):
+    import jarvis.modules.search_index as si
+
+    index_path = tmp_path / "index.json"
+    index_path.write_text(json.dumps([
+        {"source": "a.txt", "text": "about cats", "embedding": [1.0, 0.0]},
+    ]), encoding="utf-8")
+    embed_calls = []
+
+    def fake_embed(text, model="nomic-embed-text", host="http://localhost:11434"):
+        embed_calls.append(text)
+        return [1.0, 0.0]
+
+    monkeypatch.setattr(si, "embed", fake_embed)
+    si.search("first", index_path=str(index_path))
+    si.search("second", index_path=str(index_path))
+
+    assert embed_calls == ["first", "second"]
+
+
+def test_index_status_reports_saved_pages(tmp_path, monkeypatch):
+    import jarvis.modules.search_index as si
+
+    index_path = tmp_path / "index.json"
+    index_path.write_text(json.dumps([
+        {"source": "a.txt", "text": "one", "embedding": [1.0]},
+        {"source": "a.txt", "text": "two", "embedding": [1.0]},
+        {"source": "b.txt", "text": "three", "embedding": [1.0]},
+    ]), encoding="utf-8")
+    monkeypatch.setattr(si, "_DEFAULT_INDEX_PATH", str(index_path))
+
+    assert si.SearchIndexSkill().handle("index status") == (
+        "Search index: 3 chunk(s) from 2 saved page(s)."
+    )
+
+
+def test_index_status_explains_when_index_is_missing(tmp_path, monkeypatch):
+    import jarvis.modules.search_index as si
+    monkeypatch.setattr(si, "_DEFAULT_INDEX_PATH", str(tmp_path / "missing.json"))
+
+    assert "not built yet" in si.SearchIndexSkill().handle("index status")
+
+
 def test_skill_matches_search_and_index_triggers():
     sk = SearchIndexSkill()
     assert sk.matches("search my notes for tokenization") is True
     assert sk.matches("index my documents") is True
+    assert sk.matches("index status") is True
     assert sk.matches("tell me a joke") is False
 
 

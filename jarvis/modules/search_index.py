@@ -33,6 +33,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
 _PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEFAULT_SOURCE_DIR = os.path.join(_PKG_DIR, "data", "web")
 _DEFAULT_INDEX_PATH = os.path.join(_PKG_DIR, "data", "search_index.json")
+_INDEX_CACHE: dict[str, tuple[int, list[dict], np.ndarray]] = {}
 
 
 def embed(text: str, model: str = "nomic-embed-text", host: str = "http://localhost:11434") -> list[float]:
@@ -87,33 +88,54 @@ def build_index(source_dir: str | None = None, index_path: str | None = None,
     os.makedirs(os.path.dirname(index_path), exist_ok=True)
     with open(index_path, "w", encoding="utf-8") as f:
         json.dump(records, f)
+    _INDEX_CACHE.pop(os.path.abspath(index_path), None)
     return len(records)
+
+
+def _load_index(index_path: str) -> tuple[list[dict], np.ndarray] | None:
+    """Load and normalize an index once, reusing it until the file changes."""
+    if not os.path.exists(index_path):
+        return None
+    cache_key = os.path.abspath(index_path)
+    stat = os.stat(index_path)
+    cached = _INDEX_CACHE.get(cache_key)
+    if cached is not None and cached[0] == stat.st_mtime_ns:
+        return cached[1], cached[2]
+
+    with open(index_path, encoding="utf-8") as f:
+        records = json.load(f)
+    if not records:
+        matrix_norm = np.empty((0, 0), dtype=float)
+    else:
+        matrix = np.array([r["embedding"] for r in records], dtype=float)
+        matrix_norm = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
+    _INDEX_CACHE[cache_key] = (stat.st_mtime_ns, records, matrix_norm)
+    return records, matrix_norm
 
 
 def search(query: str, index_path: str | None = None, top_k: int = 5,
            model: str = "nomic-embed-text", host: str = "http://localhost:11434") -> list[dict]:
     index_path = index_path or _DEFAULT_INDEX_PATH
-    if not os.path.exists(index_path):
+    loaded = _load_index(index_path)
+    if loaded is None:
         return []
-    with open(index_path, encoding="utf-8") as f:
-        records = json.load(f)
+    records, matrix_norm = loaded
     if not records:
         return []
 
     query_vec = np.array(embed(query, model=model, host=host))
-    matrix = np.array([r["embedding"] for r in records])
-    # cosine similarity, vectorized: normalize once, then a single dot product
     query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-9)
-    matrix_norm = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
     scores = matrix_norm @ query_norm
 
-    ranked = sorted(range(len(records)), key=lambda i: scores[i], reverse=True)[:top_k]
+    top_k = max(0, min(top_k, len(records)))
+    ranked = np.argsort(scores)[::-1][:top_k]
     return [{"source": records[i]["source"], "text": records[i]["text"], "score": float(scores[i])}
             for i in ranked]
 
 
 _SEARCH_TRIGGERS = ("search my notes for", "search my documents for", "search saved pages for")
 _INDEX_TRIGGERS = {"index my documents", "rebuild search index", "index saved pages"}
+_STATUS_TRIGGERS = {"index status", "search index status", "search status"}
 
 
 class SearchIndexSkill(SkillModule):
@@ -139,13 +161,24 @@ class SearchIndexSkill(SkillModule):
 
     def matches(self, text: str) -> bool:
         t = text.strip().lower()
-        if t in _INDEX_TRIGGERS:
+        if t in _INDEX_TRIGGERS or t in _STATUS_TRIGGERS:
             return True
         return any(t.startswith(p) for p in _SEARCH_TRIGGERS)
 
     def handle(self, text: str) -> str:
         t = text.strip()
         low = t.lower()
+
+        if low in _STATUS_TRIGGERS:
+            index_path = _DEFAULT_INDEX_PATH
+            if not os.path.exists(index_path):
+                return "Search index: not built yet. Say \"index my documents\" to build it."
+            try:
+                records, _ = _load_index(index_path) or ([], np.empty((0, 0)))
+                sources = len({r["source"] for r in records})
+                return f"Search index: {len(records)} chunk(s) from {sources} saved page(s)."
+            except Exception as e:
+                return f"Search index: unavailable ({e})"
 
         if low in _INDEX_TRIGGERS:
             try:
