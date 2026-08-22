@@ -104,8 +104,6 @@ serial command) goes through `security.py`'s `SecurityGate` first.
 
 ---
 
-## Running fully offline
-
 ## Getting started interactively
 
 Double-click `Start JARVIS.bat` (repo root) — voice mode, output visible in that window.

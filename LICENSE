@@ -1,17 +1,68 @@
+PROPRIETARY SOFTWARE LICENSE
+
 Copyright (c) 2026 Abhishek-Dev0. All Rights Reserved.
 
-This repository and its contents (including but not limited to source code,
-models, checkpoints, training data, documentation, and configuration) are
-proprietary and confidential.
+This license governs all use of the software, source code, trained models,
+checkpoints, training data, documentation, and configuration files contained
+in this repository (collectively, the "Software"). By accessing, cloning, or
+otherwise obtaining a copy of the Software, you agree to be bound by the
+terms below.
 
-No license, express or implied, to use, copy, modify, merge, publish,
-distribute, sublicense, or sell copies of this software or any portion of it
-is granted, except by prior written permission of the copyright holder.
+1. OWNERSHIP
 
-Unauthorized copying, reproduction, distribution, or use of this repository
-or its contents, via any medium, is strictly prohibited.
+The Software is the sole and exclusive property of Abhishek-Dev0 (the
+"Owner"). All right, title, and interest in and to the Software, including
+all associated intellectual property rights, are and shall remain with the
+Owner. No ownership interest is transferred by any access to, or use of,
+this repository.
 
-This repository is private. Access to it does not, by itself, constitute
-permission to use, copy, modify, or redistribute its contents.
+2. NO LICENSE GRANTED
 
-For licensing inquiries, contact the copyright holder directly.
+No license, right, or permission — express, implied, or by estoppel — is
+granted to any person to use, copy, reproduce, modify, adapt, merge,
+publish, distribute, sublicense, sell, rent, lease, or create derivative
+works of the Software, in whole or in part, through any medium, except by
+prior written agreement signed by the Owner.
+
+3. CONFIDENTIALITY
+
+The Software is confidential and proprietary. Any access granted to this
+repository is granted solely for the limited purpose communicated directly
+by the Owner, if any, and does not extend to any other use. Recipients of
+any access to the Software shall not disclose, publish, or make available
+its contents to any third party without the Owner's prior written consent.
+
+4. NO IMPLIED PERMISSION FROM ACCESS
+
+Access to this repository — whether granted deliberately, obtained through
+a private link, or otherwise — does not, by itself, constitute a license or
+permission of any kind. Absence of an objection is not consent.
+
+5. RESERVATION OF RIGHTS
+
+The Owner reserves all rights not expressly granted herein. The Owner may
+pursue any and all remedies available at law or in equity, including
+injunctive relief and damages, against any unauthorized use, copying, or
+distribution of the Software.
+
+6. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT
+OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+7. SEVERABILITY
+
+If any provision of this license is held unenforceable, the remaining
+provisions shall continue in full force and effect.
+
+8. CONTACT
+
+For licensing inquiries or to request written permission for a use not
+covered above, contact the Owner directly.
+
+---
+This repository is private. This license applies regardless of the
+repository's visibility setting at any given time.

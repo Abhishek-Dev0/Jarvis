@@ -39,11 +39,24 @@ jarvis/
 │   ├── train.py          training loop
 │   └── generate.py       sampling + KV cache
 ├── modules/              ← the part you bolt on. never touches core/.
-│   ├── base.py           Module / InputModule / OutputModule / SkillModule + Registry
-│   └── builtin.py        console I/O, calculator, voice stubs
+│   ├── base.py            Module / InputModule / OutputModule / SkillModule + Registry
+│   ├── builtin.py         console I/O, calculator, speech I/O interfaces
+│   ├── voice.py           faster-whisper STT + Kokoro/Piper TTS, 11 languages
+│   ├── translate.py       Argos Translate bridge for non-English speech
+│   ├── hardware.py        detects CPU/RAM/GPU, auto-sizes whisper + the reasoning model
+│   ├── reasoning.py       local LLM via Ollama (real conversation/knowledge), MCP tool-calling
+│   ├── web.py             live web search + page-saving for future training
+│   ├── os_control.py      open/close/list applications — security-gated
+│   ├── hardware_io.py     serial/Arduino I/O — security-gated
+│   ├── biosignal.py       EMG muscle-activity detection (pure signal processing)
+│   ├── mcp_client.py      connects to MCP servers, exposes tools to reasoning.py
+│   └── market_analysis.py honest backtesting (buy-and-hold / SMA) — no live trading
 ├── runtime/
-│   └── jarvis.py         orchestrator: input → skill? → model → output
-├── data/                 corpus + tokenizer + .bin shards
+│   └── jarvis.py          orchestrator: input → skill? → model (+ tools) → output
+├── security.py            SecurityGate — passphrase + voiceprint + face verification
+├── self_modify.py         draft → sandbox-test → gated human approval, never auto-commits
+├── vendor_models.py       backs up downloaded model weights for offline setup
+├── data/                  corpus + tokenizer + .bin shards + downloaded voice/translate models
 └── checkpoints/
 ```
 
@@ -52,9 +65,9 @@ jarvis/
 ## Quickstart
 
 ```bash
-pip install torch numpy regex
+pip install -r jarvis/requirements.txt
 
-# 1. put your text in data/corpus.txt, then learn a vocabulary from it
+# 1. put your text in jarvis/data/corpus.txt, then learn a vocabulary from it
 python -m core.data prepare-tokenizer --input data/corpus.txt --vocab-size 8192
 
 # 2. tokenize the corpus into train.bin / val.bin
@@ -67,11 +80,66 @@ python -m core.train --preset micro         # GPU, hours — first real model
 # 4. generate
 python -m core.generate --prompt "The robot"
 
-# 5. run the assistant
-python -m runtime.jarvis
+# 5. run the assistant (from the repo root)
+python -m jarvis                  # console
+python -m jarvis --voice          # microphone + spoken reply, fully local
 ```
 
-`--resume checkpoints/latest.pt` picks a run back up.
+Steps 1–4 run from inside `jarvis/`; step 5 runs from the repo root. `--resume
+checkpoints/latest.pt` picks a training run back up. `python -m jarvis --help` lists
+every flag — voice persona/language, whisper/reasoning model overrides, and `--no-*`
+switches to disable any individual module (os control, hardware, MCP, market
+analysis, reasoning, self-modify).
+
+---
+
+## Getting started interactively
+
+Double-click `Start JARVIS.bat` (repo root) — voice mode, output visible in that window.
+`run_jarvis.bat` is a *different* file used only by `Launch JARVIS.vbs` for a silent
+background start (output goes to `jarvis/data/logs/jarvis.log` instead of a console,
+since there isn't one) — running it directly looks like nothing is happening, on purpose.
+
+First run: JARVIS itself offers to set up your admin passphrase the moment it starts —
+no separate command needed, and the passphrase never passes through anything but you and
+the running program. (You can also run `python -m jarvis.security enroll` directly, with
+`--voice` for a spoken enrollment or `--face` to also enroll a face embedding via webcam.)
+Three ways to become admin once enrolled: the automatic wake-time voiceprint challenge,
+saying "I'm the admin" any time mid-session (asks for the passphrase, one retry allowed),
+or saying "recognize me" for a face-only check — weaker (single factor) on purpose, for
+when you don't want to say the passphrase out loud in public. Say "change the phrase" to
+re-enroll — this requires proving you're already admin first, same as any real
+"change password" flow. Voiceprint and face embeddings are encrypted at rest (Windows
+DPAPI, tied to your OS account) — never stored in plain form.
+
+---
+
+## Beyond the core model
+
+The from-scratch model is JARVIS's identity layer, not its only source of capability —
+modules attach real capability from outside it (see "Adding capability without touching
+the core" below). As of this writing that includes: voice I/O in 11 languages, a local
+reasoning LLM (Ollama) for actual conversation and knowledge — including MCP tool-calling,
+so it can use real external tools when connected to one — OS-level automation (open/close/
+list applications), serial/Arduino hardware I/O with EMG muscle-activity sensing for
+robotics/exoskeleton projects, honest historical backtesting for markets, offline model
+vendoring, and a self-modify pipeline that drafts and sandbox-tests its own patches but
+never applies one without gated human approval. Every action that changes system state
+outside the conversation (launching an app, sending a serial command, applying a
+self-modify proposal) goes through `security.py`'s `SecurityGate` first.
+
+---
+
+## Running fully offline
+
+Every model here downloads its weights **once** and runs offline forever after — none of
+it calls an API at inference time. `python -m jarvis.vendor_models status` shows what's
+already downloaded and where (Piper/Kokoro voices, faster-whisper's Hugging Face cache,
+Argos Translate packages, Ollama's model blobs); `backup` copies whatever's present into
+`vendor/` (gitignored, local only) so a re-setup — or a move to a new machine — never
+needs those sources reachable again. `restore` copies it back into place. See
+`vendor_models.py`'s docstring for exactly what is and isn't included (deliberately not
+`data/security/` — that's your passphrase/voiceprint/face data, not a model weight).
 
 ---
 
@@ -106,6 +174,28 @@ the format.
 Getting a conversational JARVIS is two stages, same code both times:
 1. **Pretrain** on a large raw corpus → `chat_mode=False`
 2. **Fine-tune** on `<|user|>…<|assistant|>…<|eos|>` transcripts → `chat_mode=True`
+
+Both stages are done, end to end, with real data (not a synthetic smoke test):
+
+```bash
+python -m core.data fetch-dolly --output data/dolly_pairs.json   # Databricks Dolly 15k, CC BY-SA 3.0
+python -m core.data format-chat --input data/dolly_pairs.json --output data/chat.txt
+python -m core.data prepare --input data/chat.txt --tokenizer data/tokenizer.json \
+    --out-dir data/chat --val-fraction 0.05
+python -m core.train --preset nano --data-dir data/chat --ckpt-dir checkpoints/chat \
+    --resume checkpoints/best.pt --max-steps 3000
+python -m jarvis --chat-mode --ckpt checkpoints/chat/best.pt   # from the repo root
+```
+
+9,715 Dolly examples (filtered to fit the nano preset's 256-token context), 3,000 steps,
+6 minutes on an RTX 3050. Val loss dropped from 6.22 (raw pretrain, never seen the chat
+format at all) to 4.36. Mechanically correct — the model reliably learned the
+`<|user|>`/`<|assistant|>`/`<|eos|>` structure and stops cleanly — but content quality is
+weak, honestly: a 1.8M-parameter model doesn't have the capacity to be coherent or factual,
+fine-tuning changes what format it outputs, not how much it actually knows. `--chat-mode`
+against `checkpoints/chat/best.pt` is real and working; don't expect real answers out of it
+at this scale. Fine-tuning is otherwise scale-invariant — the same commands against a
+`micro`/`small` preset trained on more data will produce something actually useful.
 
 ---
 
@@ -171,11 +261,16 @@ compute; a smaller model on more data almost always wins.
    produces genuinely readable English. Watch the val loss — when it stops
    falling while train loss keeps falling, you are overfitting; get more data.
 3. **Build the fine-tune stage.** Format conversations, train on them, flip
-   `chat_mode=True`. This is where it starts feeling like an assistant.
+   `chat_mode=True`. This is where it starts feeling like an assistant — see
+   "Two traps" above for the real commands/numbers; done against real data, not
+   just a mechanics test, as of 2026-08-22 (nano preset — scale up the preset for
+   quality, the pipeline itself doesn't change).
 4. **Then** voice. Not before. Debugging a language model and a speech pipeline
    simultaneously means you can never tell which one is broken.
-5. **Then** Loki integration — an `OutputModule` that turns text into motor
-   commands is a very natural bridge between your two projects.
+5. **Then** Loki integration — `modules/hardware_io.py`'s `SerialLink`/`HardwareSkill`
+   now cover this: connect over serial, send commands, read sensor data, all
+   security-gated. `modules/biosignal.py` adds EMG muscle-activity detection on top,
+   for driving an actuator from a wearable sensor.
 
 ---
 
@@ -188,11 +283,19 @@ Every claim above was tested, not assumed:
 - init loss 8.33 vs theoretical `ln(vocab)` = 8.32
 - a `nano` model trained to near the corpus entropy floor and generates
   structurally correct text
+- 91 automated tests across `tests/` covering every module built beyond the
+  core (security, hardware I/O, biosignal, MCP, market analysis, self-modify,
+  vendoring, admin-trigger phrase handling)
 
 ---
 
 ## License
 
-All rights reserved — see [LICENSE](LICENSE). This is a private repository;
-access to it does not grant permission to use, copy, modify, or redistribute
-its contents.
+**Proprietary — All Rights Reserved.** Copyright (c) 2026 Abhishek-Dev0.
+
+No part of this repository — source code, trained models, checkpoints, training
+data, or documentation — may be used, copied, modified, or redistributed
+without prior written permission from the copyright holder. This is a private
+repository; being granted access to it does not, by itself, grant any of those
+rights. Full terms, including the no-warranty and enforcement provisions: see
+[LICENSE](LICENSE).
