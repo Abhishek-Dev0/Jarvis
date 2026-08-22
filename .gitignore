@@ -35,6 +35,10 @@ jarvis/data/memory.json
 jarvis/data/web/
 jarvis/data/logs/
 
+# vector search index (modules/search_index.py) — regenerable from
+# data/web/ via "index my documents"
+jarvis/data/search_index.json
+
 # self-modify proposals (drafts + sandbox test output) — local working
 # state, not source; the applied result (if any) is the real diff to commit
 jarvis/data/self_modify/
