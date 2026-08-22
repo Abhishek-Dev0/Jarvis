@@ -86,6 +86,93 @@ def _normalize_phrase(text: str) -> str:
 def _is_shutdown_request(text: str, phrases: set[str]) -> bool:
     return _normalize_phrase(text) in phrases
 
+
+# Lines matched here get redacted before ever reaching the session log file
+# — never the real console, which is local and already fine. Abi asked for
+# this session-log capability specifically so he can copy/paste it into a
+# chat with Claude for diagnosis (2026-08-22); a file meant to leave the
+# machine that way must not carry a live credential. Currently one known
+# pattern: security.enroll()'s voice-enrollment echo of the just-heard
+# passphrase (useful on the real console — confirms what was actually
+# transcribed — but exactly the kind of line that must never leave it).
+# Any future code that prints something secret needs its own entry here.
+import re as _re
+_LOG_REDACTIONS = [
+    (_re.compile(r'(\[security\] heard: ").*(" — say this back to verify later\.)'),
+     r'\1[REDACTED]\2'),
+]
+
+
+class _TeeLog:
+    """Duplicates every write to both the real console/stream and a session
+    log file, applying _LOG_REDACTIONS to the file copy only. Forwards
+    unknown attributes (reconfigure(), isatty(), etc.) to the wrapped
+    stream so this is a transparent drop-in for sys.stdout/sys.stderr."""
+
+    def __init__(self, stream, log_file):
+        self._stream = stream
+        self._log_file = log_file
+
+    def write(self, data):
+        self._stream.write(data)
+        redacted = data
+        for pattern, repl in _LOG_REDACTIONS:
+            redacted = pattern.sub(repl, redacted)
+        try:
+            self._log_file.write(redacted)
+            self._log_file.flush()
+        except Exception:
+            pass
+        return len(data)
+
+    def flush(self):
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def _start_session_log() -> str:
+    """Tees stdout/stderr into a timestamped file under data/logs/ for the
+    rest of this process's life, so a full session transcript — not just
+    caught exceptions (see self_modify.py's separate issues.jsonl) — is
+    always available to copy/paste, without needing a screenshot.
+
+    Pair with _stop_session_log() before the process exits — without it,
+    Python's interpreter-shutdown sequence tries to flush/close sys.stdout
+    itself, but by then the original real stream underneath this wrapper
+    may already be torn down, which surfaced as a harmless but ugly
+    "Exception ignored in: <_TeeLog ...>" / "Exception ignored in
+    sys.unraisablehook" on every clean exit — found by actually running a
+    full session end-to-end, not assumed away. Restoring the real streams
+    and closing the log file explicitly, before that shutdown sequence
+    ever runs, avoids it entirely.
+    """
+    import datetime
+    logs_dir = os.path.join(_PKG_DIR, "data", "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    log_path = os.path.join(logs_dir, f"session_{ts}.log")
+    log_file = open(log_path, "a", encoding="utf-8", errors="replace")
+    sys.stdout = _TeeLog(sys.stdout, log_file)
+    sys.stderr = _TeeLog(sys.stderr, log_file)
+    return log_path
+
+
+def _stop_session_log() -> None:
+    if isinstance(sys.stdout, _TeeLog):
+        real_stdout, log_file = sys.stdout._stream, sys.stdout._log_file
+        sys.stdout = real_stdout
+    else:
+        log_file = None
+    if isinstance(sys.stderr, _TeeLog):
+        sys.stderr = sys.stderr._stream
+    if log_file is not None:
+        try:
+            log_file.close()
+        except Exception:
+            pass
+
 # Same fix as ConsoleOutput.setup() (modules/builtin.py), applied here too:
 # diagnostics printed before any module registers — e.g. load_model()'s
 # "no checkpoint found" notice — would otherwise hit Windows' legacy console
@@ -582,7 +669,16 @@ def main():
     ap.add_argument("--no-mascot", action="store_true",
                     help="disable the animated terminal cat (modules/mascot.py) — purely "
                          "cosmetic, no effect on any actual capability")
+    ap.add_argument("--no-session-log", action="store_true",
+                    help="disable writing a full session transcript to data/logs/session_*.log "
+                         "(on by default — hand that file to Claude to diagnose an issue instead "
+                         "of a screenshot; known secret-revealing lines are redacted before they "
+                         "reach the file, see _LOG_REDACTIONS)")
     args = ap.parse_args()
+
+    if not args.no_session_log:
+        log_path = _start_session_log()
+        print(f"[jarvis] session log: {log_path}")
 
     print("Analyzing system specifications...")
     from jarvis.modules import hardware
@@ -676,6 +772,8 @@ def main():
     finally:
         if scanner is not None:
             scanner.stop()
+        if not args.no_session_log:
+            _stop_session_log()
 
 
 if __name__ == "__main__":
