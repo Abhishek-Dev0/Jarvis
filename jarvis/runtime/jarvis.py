@@ -26,6 +26,7 @@ try:
     from jarvis.modules.mcp_client import MCPSkill
     from jarvis.modules.market_analysis import MarketAnalysisSkill
     from jarvis.security import SecurityGate
+    from jarvis import security
     from jarvis import self_modify
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
@@ -38,6 +39,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.mcp_client import MCPSkill
     from modules.market_analysis import MarketAnalysisSkill
     from security import SecurityGate
+    import security
     import self_modify
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
@@ -59,6 +61,15 @@ _ADMIN_TRIGGER_PHRASES_EN = {"im the admin", "i am the admin"}
 # out loud in public. See security.SecurityGate.face_login's docstring for
 # why this is deliberately weaker (single-factor) than the passphrase path.
 _FACE_LOGIN_PHRASES_EN = {"recognize me", "check my face", "face login", "admin face login"}
+# Re-enrolling the passphrase requires PROVING you're already admin first
+# (current session admin state, or the OLD passphrase via authorize()) —
+# same reason every "change password" flow anywhere requires the current
+# password: without that, anyone could say this phrase and lock the real
+# admin out. Not an extra restriction Abi didn't ask for — it's what makes
+# "I can just say change the phrase and it registers again" (his own
+# 2026-08-22 request) safe to build at all.
+_CHANGE_PASSPHRASE_PHRASES_EN = {"change the phrase", "change the passphrase",
+                                  "change my passphrase", "reset the passphrase"}
 
 
 def _normalize_phrase(text: str) -> str:
@@ -127,6 +138,7 @@ class Jarvis:
         self.affirmative_phrases = set(_AFFIRMATIVE_PHRASES_EN)
         self.admin_trigger_phrases = set(_ADMIN_TRIGGER_PHRASES_EN)
         self.face_login_phrases = set(_FACE_LOGIN_PHRASES_EN)
+        self.change_passphrase_phrases = set(_CHANGE_PASSPHRASE_PHRASES_EN)
 
     def refresh_multilingual_phrases(self) -> None:
         """Extends shutdown/affirmative/admin-trigger phrase matching into
@@ -144,6 +156,7 @@ class Jarvis:
             (_AFFIRMATIVE_PHRASES_EN, self.affirmative_phrases),
             (_ADMIN_TRIGGER_PHRASES_EN, self.admin_trigger_phrases),
             (_FACE_LOGIN_PHRASES_EN, self.face_login_phrases),
+            (_CHANGE_PASSPHRASE_PHRASES_EN, self.change_passphrase_phrases),
         )
         for lang in SUPPORTED_LANGUAGES:
             if lang == "en":
@@ -242,6 +255,81 @@ class Jarvis:
             if hasattr(o, "current_lang"):
                 o.current_lang = lang
 
+    def _yes_no(self, prompt: str) -> bool:
+        """Asks a yes/no question through whatever I/O this session is
+        already using (mic if --voice, console input() otherwise) and
+        returns the answer. Used by _offer_enrollment/_handle_change_
+        passphrase so setup never needs a separate command — it's just
+        part of the running conversation."""
+        self.registry.emit_all(prompt)
+        voice_mode = self.security.mic_engine is not None and hasattr(self.security.mic_engine, "transcribe")
+        if voice_mode:
+            audio = self.security.mic_engine.record_until_silence()
+            reply = self.security.mic_engine.transcribe(audio) or ""
+        else:
+            try:
+                reply = input("you> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                reply = ""
+        return _normalize_phrase(reply) in self.affirmative_phrases
+
+    def _enroll_passphrase_live(self) -> None:
+        """Captures a NEW passphrase through this session's own I/O (mic if
+        --voice, hidden getpass() otherwise) and enrolls it — the secret
+        only ever passes between the person at the keyboard/mic and this
+        running process, never through anything else. Preserves any
+        existing voiceprint/face enrollment (security.enroll() only
+        overwrites what you pass it)."""
+        voice_mode = self.security.mic_engine is not None and hasattr(self.security.mic_engine, "transcribe")
+        if voice_mode:
+            self.registry.emit_all("Speak your new passphrase now, then go quiet.")
+            audio = self.security.mic_engine.record_until_silence()
+            security.enroll(voice_audio=audio, transcribe_fn=self.security.mic_engine.transcribe)
+        else:
+            import getpass
+            self.registry.emit_all("Setting a new passphrase — type it now (hidden).")
+            passphrase = getpass.getpass("New passphrase: ")
+            security.enroll(passphrase=passphrase)
+
+    def _offer_enrollment(self) -> None:
+        """Called once at the start of run() if nothing is enrolled yet.
+        First-run setup done entirely within this running process — no
+        separate `python -m jarvis.security enroll` command to remember.
+        Declining is fine; every gated action just keeps denying (same as
+        always) until this or the CLI enrollment is run."""
+        if security.is_enrolled():
+            return
+        if not self._yes_no("No admin credentials are set up yet. Would you like to set one up now?"):
+            self.registry.emit_all("Okay — say \"change the phrase\" any time to set one up later.")
+            return
+        self._enroll_passphrase_live()
+        self.registry.emit_all("Passphrase set.")
+
+        if self._yes_no("Would you also like to enroll face recognition, for a "
+                         "passphrase-free admin check later?"):
+            try:
+                self.registry.emit_all("Look at the camera now...")
+                security.enroll_face()
+                self.registry.emit_all("Face enrolled.")
+            except Exception as e:
+                self_modify.log_exception("enroll_face", e)
+                self.registry.emit_all(
+                    f"Couldn't enroll a face right now ({e}). You can try again later "
+                    f"with: python -m jarvis.security enroll --face")
+
+    def _handle_change_passphrase(self) -> None:
+        """"Change the phrase" — requires PROVING you're already admin
+        first (current session state, or the OLD passphrase), same reason
+        every "change password" flow anywhere requires the current
+        password. Without that this would just be a way for anyone to
+        lock the real admin out by saying five words."""
+        if not (self.is_admin or self.security.authorize("change the passphrase")):
+            self.registry.emit_all("Admin denied. You're a general user.")
+            return
+        self.is_admin = True
+        self._enroll_passphrase_live()
+        self.registry.emit_all("Passphrase changed.")
+
     def run(self):
         if not self.registry.inputs:
             raise RuntimeError("no input module registered")
@@ -259,6 +347,17 @@ class Jarvis:
         # normal gated paths below/in the main loop, nothing here bypasses
         # any of that.
         self.registry.emit_all("Systems online. How can I help you, sir?")
+
+        # First-run setup, if nothing is enrolled yet — done live, through
+        # this same session's own I/O, not a separate command. See
+        # _offer_enrollment's docstring for why the secret never passes
+        # through anything but this running process.
+        try:
+            self._offer_enrollment()
+        except Exception as e:
+            self_modify.log_exception("offer_enrollment", e)
+            print(f"[jarvis] enrollment setup failed ({e}) — try again later with: "
+                  f"python -m jarvis.security enroll")
 
         # Once, at session start: if the first thing heard matches the
         # enrolled voiceprint, offer the admin login. Silent no-op if no mic,
@@ -314,11 +413,14 @@ class Jarvis:
                 if _normalize_phrase(text) in self.admin_trigger_phrases:
                     if self.is_admin:
                         self.registry.emit_all("Already recognized as admin.")
-                    elif self.security.authorize("become admin"):
-                        self.is_admin = True
-                        # authorize() already said "Full capabilities online."
                     else:
-                        self.registry.emit_all("Access denied.")
+                        # authorize() itself announces the outcome — "Admin
+                        # control initiated. Please say the passphrase.",
+                        # then either "Full capabilities online." or
+                        # "Admin denied. You're a general user." — including
+                        # one retry on a wrong/misheard attempt before it
+                        # gives up. Nothing else to say here.
+                        self.is_admin = self.security.authorize("become admin")
                     continue
 
                 if _normalize_phrase(text) in self.face_login_phrases:
@@ -328,7 +430,11 @@ class Jarvis:
                         self.is_admin = True
                         self.registry.emit_all("Admin recognized. Initializing full capabilities.")
                     else:
-                        self.registry.emit_all("Face not recognized. Access denied.")
+                        self.registry.emit_all("Face not recognized. Admin denied. You're a general user.")
+                    continue
+
+                if _normalize_phrase(text) in self.change_passphrase_phrases:
+                    self._handle_change_passphrase()
                     continue
 
                 skill = self.registry.find_skill(text)

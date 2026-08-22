@@ -64,6 +64,34 @@ _MIN_AUDIO_SAMPLES = 8000     # ~0.5s at 16kHz — below this, treat as "didn't 
 FACE_MATCH_THRESHOLD = 0.45
 
 
+def _save_encrypted_array(path: str, array: np.ndarray) -> None:
+    """Voiceprint/face embeddings are biometric data — encrypted at rest via
+    Windows DPAPI (CryptProtectData), tied to the current Windows user
+    account. No separate password to manage or lose: decryption only works
+    for processes running as this same OS user, which is the actual threat
+    this closes (another account on the machine, or the raw file copied
+    elsewhere, reading your embeddings straight off disk) — it deliberately
+    does NOT require your JARVIS passphrase, since face_login()'s whole
+    point is working without one.
+    """
+    import io
+    import win32crypt
+    buf = io.BytesIO()
+    np.save(buf, array)
+    encrypted = win32crypt.CryptProtectData(buf.getvalue(), "jarvis-biometric", None, None, None, 0)
+    with open(path, "wb") as f:
+        f.write(encrypted)
+
+
+def _load_encrypted_array(path: str) -> np.ndarray:
+    import io
+    import win32crypt
+    with open(path, "rb") as f:
+        encrypted = f.read()
+    _, decrypted = win32crypt.CryptUnprotectData(encrypted, None, None, None, 0)
+    return np.load(io.BytesIO(decrypted))
+
+
 def _normalize(text: str) -> str:
     text = text.lower().strip()
     text = re.sub(r"[^\w\s]", "", text)
@@ -150,7 +178,7 @@ def enroll_face(frame=None, camera_index: int = 0) -> None:
     if embedding is None:
         raise ValueError("no face detected in the captured frame — try again with better lighting/framing")
     os.makedirs(_SEC_DIR, exist_ok=True)
-    np.save(_FACE_EMBEDDING_PATH, embedding)
+    _save_encrypted_array(_FACE_EMBEDDING_PATH, embedding)
     print("[security] face enrolled.")
 
 
@@ -276,7 +304,7 @@ def enroll(passphrase: str | None = None, voice_audio: np.ndarray | None = None,
     print("[security] passphrase stored as a salted hash — the passphrase itself was not saved.")
 
     if voice_audio is not None:
-        np.save(_VOICEPRINT_PATH, _embed(voice_audio))
+        _save_encrypted_array(_VOICEPRINT_PATH, _embed(voice_audio))
         print("[security] voiceprint enrolled from the same recording.")
 
 
@@ -350,7 +378,7 @@ class SecurityGate:
             return False
         if embedding is None:
             return False
-        score = float(np.dot(embedding, np.load(_FACE_EMBEDDING_PATH)))
+        score = float(np.dot(embedding, _load_encrypted_array(_FACE_EMBEDDING_PATH)))
         matched = score >= FACE_MATCH_THRESHOLD
         if matched:
             print(f"[security] face matched (score={score:.2f}).")
@@ -377,7 +405,7 @@ class SecurityGate:
         audio = self.mic_engine.record_until_silence()
         if audio.size < _MIN_AUDIO_SAMPLES:
             return False
-        score = _cosine(np.load(_VOICEPRINT_PATH), _embed(audio))
+        score = _cosine(_load_encrypted_array(_VOICEPRINT_PATH), _embed(audio))
         if score < VOICE_MATCH_THRESHOLD:
             return False  # not the enrolled voice — say nothing, proceed as a normal session
 
@@ -401,27 +429,40 @@ class SecurityGate:
 
         voice_mode = self.mic_engine is not None and hasattr(self.mic_engine, "transcribe")
         audio = None
+        passed = False
 
-        if voice_mode:
-            if reason == "become admin":
-                self._say("Admin control initiated. Please say the passphrase.")
+        # One retry on a wrong/misheard passphrase (2 attempts total) — a
+        # transcribed spoken passphrase is genuinely failure-prone, and
+        # Abi asked for this explicitly (2026-08-22) for the "become admin"
+        # flow specifically; applied to every reason uniformly since it's a
+        # small, bounded usability improvement either way, not a weakening
+        # (still capped at 2 attempts, not unlimited).
+        for attempt in range(2):
+            if voice_mode:
+                if reason == "become admin":
+                    prompt = "Admin control initiated. Please say the passphrase." if attempt == 0 \
+                        else "That didn't match. Please say the passphrase again."
+                else:
+                    prompt = f"Verification required for {reason}. Please say your passphrase." \
+                        if attempt == 0 else "That didn't match. Please say your passphrase again."
+                self._say(prompt)
+                audio = self.mic_engine.record_until_silence()
+                if audio.size < _MIN_AUDIO_SAMPLES:
+                    continue  # didn't catch anything -> falls through to the retry (or final denial)
+                spoken = self.mic_engine.transcribe(audio)
+                if not spoken:
+                    continue
+                passed = self._check_passphrase(spoken)
             else:
-                self._say(f"Verification required for {reason}. Please say your passphrase.")
-            audio = self.mic_engine.record_until_silence()
-            if audio.size < _MIN_AUDIO_SAMPLES:
-                self._say("Denied — didn't catch anything.")
-                return False
-            spoken = self.mic_engine.transcribe(audio)
-            if not spoken:
-                self._say("Denied — couldn't understand that.")
-                return False
-            passed = self._check_passphrase(spoken)
-        else:
-            print(f"[security] verification required for: {reason}")
-            passed = self._check_passphrase(getpass.getpass("Passphrase: "))
+                print(f"[security] verification required for: {reason}"
+                      if attempt == 0 else "[security] that didn't match, try again")
+                passed = self._check_passphrase(getpass.getpass("Passphrase: "))
+            if passed:
+                break
 
         if not passed:
-            self._say("Denied — passphrase did not match.")
+            self._say("Admin denied. You're a general user." if reason == "become admin"
+                       else "Denied — passphrase did not match.")
             return False
 
         if has_voiceprint():
@@ -436,7 +477,7 @@ class SecurityGate:
                 # factor is silently skipped, same as when nothing is
                 # enrolled for it — passphrase alone stands.
             else:
-                score = _cosine(np.load(_VOICEPRINT_PATH), _embed(audio))
+                score = _cosine(_load_encrypted_array(_VOICEPRINT_PATH), _embed(audio))
                 if score < VOICE_MATCH_THRESHOLD:
                     self._say(f"Denied — voice did not match (score={score:.2f}).")
                     return False

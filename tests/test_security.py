@@ -77,3 +77,41 @@ def test_authorize_denies_when_nothing_enrolled(tmp_path, monkeypatch):
     _isolate_security_paths(tmp_path, monkeypatch)
     gate = security.SecurityGate()
     assert gate.authorize("do something risky") is False
+
+
+def test_authorize_console_mode_retries_once_then_succeeds(tmp_path, monkeypatch):
+    _isolate_security_paths(tmp_path, monkeypatch)
+    security.enroll(passphrase="correct horse battery staple")
+    attempts = iter(["wrong first try", "correct horse battery staple"])
+    monkeypatch.setattr(security.getpass, "getpass", lambda prompt="": next(attempts))
+    gate = security.SecurityGate()
+    assert gate.authorize("do something risky") is True
+
+
+def test_authorize_console_mode_denies_after_two_wrong_attempts(tmp_path, monkeypatch):
+    _isolate_security_paths(tmp_path, monkeypatch)
+    security.enroll(passphrase="correct horse battery staple")
+    monkeypatch.setattr(security.getpass, "getpass", lambda prompt="": "still wrong")
+    gate = security.SecurityGate()
+    assert gate.authorize("do something risky") is False
+
+
+def test_authorize_become_admin_uses_sci_fi_denial_wording(tmp_path, monkeypatch, capsys):
+    _isolate_security_paths(tmp_path, monkeypatch)
+    security.enroll(passphrase="correct horse battery staple")
+    monkeypatch.setattr(security.getpass, "getpass", lambda prompt="": "wrong every time")
+    gate = security.SecurityGate()
+    assert gate.authorize("become admin") is False
+    out = capsys.readouterr().out
+    assert "Admin denied. You're a general user." in out
+
+
+def test_authorize_other_reasons_keep_generic_denial_wording(tmp_path, monkeypatch, capsys):
+    _isolate_security_paths(tmp_path, monkeypatch)
+    security.enroll(passphrase="correct horse battery staple")
+    monkeypatch.setattr(security.getpass, "getpass", lambda prompt="": "wrong every time")
+    gate = security.SecurityGate()
+    assert gate.authorize("shut down JARVIS") is False
+    out = capsys.readouterr().out
+    assert "passphrase did not match" in out
+    assert "You're a general user" not in out
