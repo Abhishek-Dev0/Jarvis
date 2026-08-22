@@ -16,5 +16,12 @@ piper-tts
 speechbrain
 argostranslate
 
+# faster-whisper's backend (ctranslate2) needs CUDA 12's cublas/cudnn even
+# though torch here is a cu118 build with its own bundled (older) cublas --
+# without these, whisper on cuda loads fine but crashes on the first real
+# transcribe() call. See modules/voice.py's _register_cuda_dll_dirs().
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+
 # self-modify pipeline's sandboxed test run (self_modify.py)
 pytest

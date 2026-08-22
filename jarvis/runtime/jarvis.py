@@ -12,6 +12,7 @@ touching anything that matters.
 from __future__ import annotations
 import os
 import sys
+import time
 import torch
 
 try:
@@ -239,13 +240,33 @@ class Jarvis:
         # enrolled voiceprint, offer the admin login. Silent no-op if no mic,
         # nothing enrolled, or the voice doesn't match — see
         # SecurityGate.wake_challenge's docstring for why that matters.
-        if self.security.wake_challenge(self.admin_name, self.affirmative_phrases):
-            self.is_admin = True
-            self.security._say("Administrator access granted.")
+        # Wrapped: a transcription-engine crash here (e.g. the cuBLAS/CUDA
+        # DLL mismatch this exact block surfaced during testing — see
+        # modules/voice.py's _register_cuda_dll_dirs()) used to kill the
+        # process before the main loop's own try/finally even started,
+        # skipping teardown_all() entirely.
+        try:
+            if self.security.wake_challenge(self.admin_name, self.affirmative_phrases):
+                self.is_admin = True
+                self.security._say("Administrator access granted.")
+        except Exception as e:
+            self_modify.log_exception("wake_challenge", e)
+            print(f"[jarvis] wake challenge failed ({e}) — continuing as a regular session")
 
         try:
             while True:
-                text = source.listen()
+                try:
+                    text = source.listen()
+                except Exception as e:
+                    self_modify.log_exception("source.listen", e)
+                    print(f"[jarvis] input error ({e}) — retrying")
+                    # A safety floor, not a real backoff: if listen() fails
+                    # before it ever blocks on real I/O (e.g. a mic that's
+                    # gone missing entirely, instead of the one-off cuBLAS
+                    # crash this was written for), this stops the retry
+                    # loop from spinning the CPU / flooding the issue log.
+                    time.sleep(0.5)
+                    continue
                 if text is None:
                     break
                 if not text.strip():

@@ -13,12 +13,55 @@ exists; the Registry only ever sees the InputModule/OutputModule interface.
 
 from __future__ import annotations
 import os
+import sys
 import numpy as np
 
 _PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MODELS_DIR = os.path.join(_PKG_DIR, "data", "models")
 
 SAMPLE_RATE = 16000
+
+
+def _register_cuda_dll_dirs() -> None:
+    """faster-whisper's backend (ctranslate2) links against CUDA 12's
+    cublas64_12.dll/cudnn64_9.dll. PyTorch on this project is a cu118 build
+    (bundles its own cublas64_11.dll instead) — a real version mismatch
+    found by actually running --voice, not assumed away: WhisperSTTEngine's
+    constructor succeeds either way, but the first real transcribe() call
+    on cuda raised "Library cublas64_12.dll is not found or cannot be
+    loaded" and crashed the whole process (see the run() loop's exception
+    handling below, which is the second half of this fix).
+
+    `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` puts the right DLLs
+    on disk under site-packages/nvidia/*/bin/, but pip does not add that
+    directory to Windows' DLL search path — ctranslate2 still can't find
+    them until something calls os.add_dll_directory() on it, which is what
+    this does, once, before any CUDA-backed engine loads. Safe to call even
+    if those packages aren't installed (skips) or on non-Windows (no-op —
+    Linux/Mac resolve shared libraries differently and don't have this
+    problem in the same way).
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import nvidia
+    except ImportError:
+        return
+    # nvidia-cublas-cu12/nvidia-cudnn-cu12 both contribute to the same
+    # `nvidia` PEP 420 namespace package (no single __init__.py, so no
+    # nvidia.__file__) — __path__ is the real, always-present way to find
+    # where each was actually installed.
+    for nvidia_dir in nvidia.__path__:
+        for pkg in ("cublas", "cudnn"):
+            bin_dir = os.path.join(nvidia_dir, pkg, "bin")
+            if os.path.isdir(bin_dir):
+                try:
+                    os.add_dll_directory(bin_dir)
+                except OSError:
+                    pass
+
+
+_register_cuda_dll_dirs()
 
 
 def record_until_silence(silence_duration=1.2, silence_threshold=0.02,
