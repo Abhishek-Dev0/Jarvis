@@ -173,7 +173,33 @@ class ReasoningSkill(SkillModule):
                 r = requests.post(f"{self.host}/api/chat", json=payload, timeout=self.timeout)
                 r.raise_for_status()
                 msg = r.json()["message"]
+            except requests.exceptions.HTTPError as e:
+                # Ollama DID respond here (that's the whole point of an
+                # HTTPError vs. a connection failure below) -- most often a
+                # 404 because `self.model` was never pulled, which used to
+                # get reported as "is ollama serve running?", actively
+                # wrong and confusing since the server is demonstrably up.
+                # Real bug, found from a live screenshot: qwen2.5:7b
+                # (auto-picked for the machine) wasn't pulled, and this
+                # message sent the user looking in the wrong place.
+                detail = None
+                try:
+                    detail = r.json().get("error")
+                except Exception:
+                    pass
+                if r.status_code == 404:
+                    return (f"Ollama is running, but '{self.model}' isn't pulled "
+                            f"({detail or 'model not found'}). Run: ollama pull {self.model}")
+                return f"My reasoning model errored ({detail or e})."
+            except requests.exceptions.RequestException as e:
+                # A real connectivity failure (refused/timed out/DNS) --
+                # this is the one case "is ollama serve running?" is
+                # actually the right question to ask.
+                return f"Can't reach Ollama at {self.host} ({e}). Is `ollama serve` running?"
             except Exception as e:
+                # Anything else (e.g. a malformed response body) -- still
+                # never let a turn crash outright, same graceful-degradation
+                # guarantee as the two branches above.
                 return f"My reasoning model isn't responding ({e}). Is `ollama serve` running?"
 
             calls = msg.get("tool_calls")

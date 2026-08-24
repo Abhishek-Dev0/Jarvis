@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import requests
+
 from jarvis.modules.memory import add_memory
 from jarvis.modules.reasoning import ReasoningSkill
 
@@ -78,15 +80,74 @@ def test_handle_without_mcp_still_works_and_has_no_tools_payload(monkeypatch):
 
 
 def test_handle_reports_unreachable_ollama_gracefully(monkeypatch):
+    # requests.post raises requests.exceptions.ConnectionError for a real
+    # refused/unreachable connection -- this is the one case where "is
+    # ollama serve running?" is actually the right question.
     def fake_post(url, json, timeout):
-        raise ConnectionError("no server")
+        raise requests.exceptions.ConnectionError("no server")
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill()
+    reply = sk.handle("hi")
+    assert "Can't reach Ollama" in reply
+    assert "ollama serve" in reply
+
+
+def test_handle_survives_a_totally_unexpected_exception(monkeypatch):
+    # Not a requests-specific error at all (e.g. a malformed response body
+    # blowing up json parsing) -- handle() must still return a message, not
+    # propagate and crash the turn.
+    def fake_post(url, json, timeout):
+        raise ValueError("unexpected")
 
     monkeypatch.setattr("requests.post", fake_post)
 
     sk = ReasoningSkill()
     reply = sk.handle("hi")
     assert "isn't responding" in reply
-    assert "ollama serve" in reply
+
+
+class _FakeErrorResponse:
+    def __init__(self, status_code, error_body=None):
+        self.status_code = status_code
+        self._error_body = error_body
+
+    def raise_for_status(self):
+        raise requests.exceptions.HTTPError(f"{self.status_code} Client Error", response=self)
+
+    def json(self):
+        if self._error_body is None:
+            raise ValueError("no body")
+        return self._error_body
+
+
+def test_handle_reports_model_not_pulled_distinctly_from_server_down(monkeypatch):
+    # Real bug found via a live screenshot: Ollama actually running (this is
+    # an HTTPError, meaning it DID respond) but the requested model was
+    # never pulled -- used to be misreported as "is ollama serve running?",
+    # which sent the user looking in the wrong place entirely.
+    def fake_post(url, json, timeout):
+        return _FakeErrorResponse(404, {"error": "model 'qwen2.5:7b' not found, try pulling it first"})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill(model="qwen2.5:7b")
+    reply = sk.handle("hi")
+    assert "isn't pulled" in reply
+    assert "ollama pull qwen2.5:7b" in reply
+    assert "ollama serve" not in reply  # must not send them down the wrong path
+
+
+def test_handle_reports_non_404_http_errors_with_detail(monkeypatch):
+    def fake_post(url, json, timeout):
+        return _FakeErrorResponse(500, {"error": "internal server error"})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill()
+    reply = sk.handle("hi")
+    assert "internal server error" in reply
 
 
 def test_handle_includes_persisted_memory_in_system_prompt(tmp_path, monkeypatch):
