@@ -25,6 +25,7 @@ try:
     from jarvis.modules.hardware_io import HardwareSkill
     from jarvis.modules.mcp_client import MCPSkill
     from jarvis.modules.market_analysis import MarketAnalysisSkill
+    from jarvis.modules.design_engine import DesignEngineSkill
     from jarvis.modules.health import HealthCheckSkill
     from jarvis.modules.memory import MemorySkill
     from jarvis.modules.fileread import FileReadSkill
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.hardware_io import HardwareSkill
     from modules.mcp_client import MCPSkill
     from modules.market_analysis import MarketAnalysisSkill
+    from modules.design_engine import DesignEngineSkill
     from modules.health import HealthCheckSkill
     from modules.memory import MemorySkill
     from modules.fileread import FileReadSkill
@@ -711,6 +713,10 @@ def main():
     ap.add_argument("--no-market-analysis", action="store_true",
                     help="disable the backtesting skill (\"backtest AAPL\", \"analyze crypto BTC-USD\") — "
                          "read-only historical analysis, no live trading account involved")
+    ap.add_argument("--no-design-engine", action="store_true",
+                    help="disable the computational-design skill (\"design a bracket load=500N "
+                         "span=150mm\") — generates parametric geometry from closed-form physics "
+                         "and writes an STL; needs scikit-image, degrades gracefully without it")
     ap.add_argument("--no-self-modify", action="store_true",
                     help="disable the self-modify skill (\"propose fix <path>: <problem>\", "
                          "\"approve proposal <id>\") — drafts+sandbox-tests only, applying a "
@@ -804,6 +810,8 @@ def main():
                                   baud=args.hardware_baud))
     if not args.no_market_analysis:
         j.register(MarketAnalysisSkill())
+    if not args.no_design_engine:
+        j.register(DesignEngineSkill(output_dir=os.path.join(_PKG_DIR, "data", "design_engine")))
     mcp_skill = None
     if not args.no_mcp:
         mcp_skill = MCPSkill(config_path=args.mcp_config,

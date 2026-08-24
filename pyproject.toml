@@ -18,6 +18,7 @@ dependencies = [
   "pyserial",
   "mcp",
   "yfinance",
+  "scikit-image",
 ]
 
 [project.scripts]

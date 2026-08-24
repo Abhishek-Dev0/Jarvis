@@ -8,6 +8,10 @@ pyserial
 mcp
 yfinance
 
+# computational-design skill (modules/design_engine.py) — marching_cubes to
+# turn a signed-distance field into a triangle mesh for STL export
+scikit-image
+
 # voice I/O + translation (modules/voice.py, modules/translate.py) — optional at
 # import time (each module degrades gracefully if missing) but required for --voice
 faster-whisper
