@@ -9,12 +9,16 @@ tooling, with risk stated explicitly, and nothing ever wired to a live
 account without that being revisited deliberately later.
 
 What's here: fetch real historical OHLCV data (yfinance — works for stocks
-and crypto, e.g. "AAPL" or "BTC-USD", no API key), run a couple of
-well-known, fully transparent baseline strategies against it (buy-and-hold,
-SMA crossover — nothing exotic, nothing claiming an edge), and report
-standard honest metrics (return, CAGR, Sharpe, max drawdown, win rate,
-trade count) against a buy-and-hold benchmark, with trading costs modeled so
-the numbers aren't flattered by pretending trades are free.
+and crypto, e.g. "AAPL" or "BTC-USD", no API key), run a few fully
+transparent strategies against it (buy-and-hold, SMA crossover, and
+ml_signal — a plain logistic regression on named technical features, not a
+black box), and report standard honest metrics (return, CAGR, Sharpe, max
+drawdown, win rate, trade count) against a buy-and-hold benchmark, with
+trading costs modeled so the numbers aren't flattered by pretending trades
+are free. ml_signal is fit ONLY on a training prefix of the history and
+evaluated ONLY on the untouched remainder — trading it on data it trained
+on would be look-ahead bias, exactly the kind of self-deception this module
+exists to refuse to hide.
 
 What's NOT here, on purpose: no live trading account connection, no order
 execution, no "recommendation" or "signal" language, no accuracy claims.
@@ -24,11 +28,21 @@ common way backtesting tools mislead people is overfitting a strategy to
 history and presenting that as skill. This module does not protect you from
 doing that to yourself if you keep tuning parameters until a number looks
 good; it only refuses to hide the fact that that risk exists.
+
+2026-08-25: asked to add "AI prediction," and — in the same conversation —
+to build a backtester that "practices until accurate," live exchange API
+credential handling, and an auto-execution engine. The first is the exact
+overfitting failure mode described above with extra steps; declined, along
+with the live/auto-execution pieces, which reverse the 2026-08-22 decision
+above without that being revisited deliberately. What got built instead:
+ml_signal, an honestly out-of-sample-evaluated strategy signal, held to the
+exact same standard as sma_crossover.
 """
 
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 try:
     from .base import SkillModule
@@ -84,7 +98,70 @@ def sma_crossover(df, fast: int = 20, slow: int = 50) -> np.ndarray:
     return position.to_numpy()
 
 
-_STRATEGIES = {"buy_and_hold": buy_and_hold, "sma_crossover": sma_crossover}
+def _ml_features(df) -> pd.DataFrame:
+    """Named, inspectable technical features — not a black box. Every
+    column here is a standard, well-known indicator; there's nothing
+    hidden about what the model actually sees."""
+    close = df["Close"]
+    feats = pd.DataFrame(index=df.index)
+    feats["return_1d"] = close.pct_change(1)
+    feats["return_5d"] = close.pct_change(5)
+    feats["sma_ratio"] = close.rolling(10).mean() / close.rolling(50).mean()
+    feats["volatility_10d"] = close.pct_change().rolling(10).std()
+    if "Volume" in df.columns:
+        feats["volume_change_5d"] = df["Volume"].pct_change(5)
+    return feats
+
+
+def ml_signal(df, train_frac: float = 0.6, min_train_rows: int = 30) -> np.ndarray:
+    """A plain logistic regression on named technical features, predicting
+    next-day up/down. Honestly out-of-sample, not a look-ahead trick: fit
+    ONLY on the first train_frac of the history, predict ONLY on the
+    untouched remainder. The training portion is reported flat (0.0 —
+    no trades) rather than backtested on data the model was fit on, since
+    doing that would be the exact overfitting/look-ahead bias this module
+    exists to refuse to hide (see the module docstring). If there isn't
+    enough valid training data, stays flat everywhere rather than fit on
+    too little."""
+    from sklearn.linear_model import LogisticRegression
+
+    close = df["Close"]
+    features = _ml_features(df)
+    next_close = close.shift(-1)
+    # NaN > x compares as False, not NaN, in pandas -- target.notna() would
+    # never actually catch the last row (no real next-day close to compare
+    # against), letting it leak into the test set with a fabricated label.
+    # Real bug, caught by testing: track validity from next_close directly.
+    has_target = next_close.notna()
+    target = (next_close > close).astype(int)
+
+    n = len(df)
+    position = np.zeros(n)
+    split = int(n * train_frac)
+
+    valid = features.notna().all(axis=1) & has_target
+    train_mask = valid & (np.arange(n) < split)
+    test_mask = valid & (np.arange(n) >= split)
+
+    if int(train_mask.sum()) < min_train_rows or int(test_mask.sum()) == 0:
+        return position  # not enough data to fit/evaluate honestly -- stay flat
+
+    model = LogisticRegression(max_iter=1000)
+    model.fit(features[train_mask], target[train_mask])
+    position[test_mask.to_numpy()] = model.predict(features[test_mask])
+    return position
+
+
+_STRATEGIES = {"buy_and_hold": buy_and_hold, "sma_crossover": sma_crossover, "ml_signal": ml_signal}
+
+_STRATEGY_NOTES = {
+    "ml_signal": (
+        "ml_signal only actively trades in its out-of-sample test window (the most "
+        "recent portion of the period, by default the last ~40%) -- the earlier portion "
+        "is flat/untraded because that's the data the model was fit on. Trading on data "
+        "it trained on would be look-ahead bias, not a real backtest."
+    ),
+}
 
 
 # ------------------------------------------------------------------- backtest
@@ -156,9 +233,13 @@ def format_report(result: dict) -> str:
         f"{'sharpe':14s}{s['sharpe']:>12.2f}{b['sharpe']:>14.2f}",
         f"{'max drawdown':14s}{pct(s['max_drawdown']):>12s}{pct(b['max_drawdown']):>14s}",
         f"{'win rate':14s}{pct(s['win_rate']):>12s}{pct(b['win_rate']):>14s}",
-        "",
-        DISCLAIMER,
     ]
+    note = _STRATEGY_NOTES.get(result["strategy_name"])
+    if note:
+        lines.append("")
+        lines.append(note)
+    lines.append("")
+    lines.append(DISCLAIMER)
     return "\n".join(lines)
 
 
@@ -192,14 +273,25 @@ class MarketAnalysisSkill(SkillModule):
         low = t.lower()
         for p in _TRIGGERS:
             if low.startswith(p):
-                symbol = t[len(p):].strip().strip("?").upper()
+                rest = t[len(p):].strip().strip("?")
                 break
         else:
-            symbol = ""
-        if not symbol:
-            return "Backtest which symbol? (e.g. \"backtest AAPL\" or \"backtest BTC-USD\")"
+            rest = ""
+        if not rest:
+            return ("Backtest which symbol? (e.g. \"backtest AAPL\", \"backtest BTC-USD\", or "
+                     f"\"backtest AAPL ml_signal\" to pick a strategy — choices: "
+                     f"{', '.join(_STRATEGIES)})")
+
+        parts = rest.split()
+        strategy = "sma_crossover"
+        if len(parts) > 1 and parts[-1].lower() in _STRATEGIES:
+            strategy = parts[-1].lower()
+            symbol = " ".join(parts[:-1]).upper()
+        else:
+            symbol = rest.upper()
+
         try:
-            result = run_backtest(symbol)
+            result = run_backtest(symbol, strategy=strategy)
         except Exception as e:
             return f"Couldn't backtest '{symbol}' ({e})."
         return format_report(result)

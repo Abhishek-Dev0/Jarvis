@@ -53,3 +53,9 @@ pyinstaller
 transformers>=5.0
 timm
 einops
+
+# market_analysis.py's ml_signal strategy — a plain, inspectable logistic
+# regression on named technical features (not a black box), fit only on a
+# training prefix and evaluated only out-of-sample. pandas comes along with
+# yfinance already; scikit-learn is the one new dependency this needed.
+scikit-learn

@@ -1,8 +1,10 @@
+import numpy as np
 import pandas as pd
 import pytest
 
 from jarvis.modules.market_analysis import (
-    DISCLAIMER, backtest, buy_and_hold, format_report, sma_crossover,
+    DISCLAIMER, MarketAnalysisSkill, _STRATEGY_NOTES, backtest, buy_and_hold,
+    format_report, ml_signal, run_backtest, sma_crossover,
 )
 
 
@@ -51,6 +53,72 @@ def test_backtest_num_trades_counts_position_changes():
     position = [0.0, 1.0, 0.0, 1.0]
     result = backtest(df, position, cost_bps=0.0)
     assert result["num_trades"] == 2
+
+
+def _synthetic_ohlcv(n=200, seed=7):
+    rng = np.random.default_rng(seed)
+    returns = rng.normal(loc=0.0005, scale=0.01, size=n)
+    close = 100.0 * np.cumprod(1.0 + returns)
+    volume = rng.integers(1_000_000, 5_000_000, size=n).astype(float)
+    return pd.DataFrame({"Close": close, "Volume": volume})
+
+
+def test_ml_signal_stays_flat_during_its_own_training_window():
+    df = _synthetic_ohlcv(n=200)
+    position = ml_signal(df, train_frac=0.6)
+    split = int(len(df) * 0.6)
+    # Trading on data the model was fit on would be look-ahead bias -- the
+    # training prefix must be exactly flat regardless of what the model
+    # would have predicted there.
+    assert all(p == 0.0 for p in position[:split])
+
+
+def test_ml_signal_only_trades_in_valid_test_rows():
+    df = _synthetic_ohlcv(n=200)
+    position = ml_signal(df, train_frac=0.6)
+    assert len(position) == len(df)
+    assert set(np.unique(position)) <= {0.0, 1.0}
+    # the last row has no next-day target -- must never be traded
+    assert position[-1] == 0.0
+
+
+def test_ml_signal_stays_flat_with_insufficient_training_data():
+    df = _synthetic_ohlcv(n=20)  # far below min_train_rows
+    position = ml_signal(df, train_frac=0.6)
+    assert all(p == 0.0 for p in position)
+
+
+def test_ml_signal_is_registered_and_runs_through_run_backtest(monkeypatch):
+    from jarvis.modules import market_analysis
+    df = _synthetic_ohlcv(n=200)
+    monkeypatch.setattr(market_analysis, "fetch_history", lambda symbol, period="2y": df)
+
+    result = run_backtest("TEST", strategy="ml_signal")
+    assert result["strategy_name"] == "ml_signal"
+    report = format_report(result)
+    assert _STRATEGY_NOTES["ml_signal"] in report
+    assert DISCLAIMER in report
+
+
+def test_skill_handle_accepts_a_trailing_strategy_name(monkeypatch):
+    from jarvis.modules import market_analysis
+    df = _synthetic_ohlcv(n=200)
+    monkeypatch.setattr(market_analysis, "fetch_history", lambda symbol, period="2y": df)
+
+    sk = MarketAnalysisSkill()
+    reply = sk.handle("backtest AAPL ml_signal")
+    assert "ml_signal" in reply
+    assert "AAPL" in reply
+
+
+def test_skill_handle_defaults_to_sma_crossover_without_a_strategy_name(monkeypatch):
+    from jarvis.modules import market_analysis
+    df = _synthetic_ohlcv(n=200)
+    monkeypatch.setattr(market_analysis, "fetch_history", lambda symbol, period="2y": df)
+
+    sk = MarketAnalysisSkill()
+    reply = sk.handle("backtest AAPL")
+    assert "sma_crossover" in reply
 
 
 def test_format_report_always_includes_disclaimer():
