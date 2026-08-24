@@ -129,13 +129,19 @@ installer to a GitHub Release automatically.
 
 The from-scratch model is JARVIS's identity layer, not its only source of capability —
 modules attach real capability from outside it (see "Adding capability without touching
-the core" below). As of this writing that includes: voice I/O in 11 languages, a local
-reasoning LLM (Ollama) for actual conversation and knowledge — including MCP tool-calling,
-so it can use real external tools when connected to one — OS-level automation (open/close/
-list applications), serial/Arduino hardware I/O with EMG muscle-activity sensing for
-robotics/exoskeleton projects, and honest historical backtesting for markets. Every
-action that changes system state outside the conversation (launching an app, sending a
-serial command) goes through `security.py`'s `SecurityGate` first.
+the core" below). As of this writing that includes: a real desktop app (see "Desktop app
+(GUI)" above), voice I/O in 11 languages, a local reasoning LLM (Ollama) for actual
+conversation and knowledge — including MCP tool-calling, so it can use real external
+tools when connected to one — OS-level automation (open/close/list applications),
+serial/Arduino hardware I/O with EMG muscle-activity sensing for robotics/exoskeleton
+projects, honest historical market backtesting (including an out-of-sample ML strategy
+signal) plus a GUI Markets tab with indicator charts and live news search, parametric
+computational-design geometry export (STL) for 3D printing, ambient vision (face
+presence + V-JEPA2 scene-change watching, off by default), and a human-gated self-modify
+pipeline that can propose, sandbox-test, and — with a second explicit approval — commit
+and push its own code changes. Every action that changes system state outside the
+conversation (launching an app, sending a serial command, applying a self-modify
+proposal) goes through `security.py`'s `SecurityGate` first.
 
 ---
 

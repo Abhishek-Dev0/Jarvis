@@ -6,7 +6,7 @@
 ; https://jrsoftware.org/isdl.php
 
 #define MyAppName "Jarvis"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Abhishek-Dev0"
 #define MyAppExeName "Jarvis.exe"
 

@@ -131,15 +131,20 @@ DPAPI, tied to your OS account) — never stored in plain form.
 
 The from-scratch model is JARVIS's identity layer, not its only source of capability —
 modules attach real capability from outside it (see "Adding capability without touching
-the core" below). As of this writing that includes: voice I/O in 11 languages, a local
-reasoning LLM (Ollama) for actual conversation and knowledge — including MCP tool-calling,
-so it can use real external tools when connected to one — OS-level automation (open/close/
-list applications), serial/Arduino hardware I/O with EMG muscle-activity sensing for
-robotics/exoskeleton projects, honest historical backtesting for markets, offline model
-vendoring, and a self-modify pipeline that drafts and sandbox-tests its own patches but
-never applies one without gated human approval. Every action that changes system state
-outside the conversation (launching an app, sending a serial command, applying a
-self-modify proposal) goes through `security.py`'s `SecurityGate` first.
+the core" below). As of this writing that includes: a real desktop app (dark theme,
+per-capability toggles, chat+mic, terminal, a Markets tab, self-modify UI — see
+`jarvis/README.md`), voice I/O in 11 languages, a local reasoning LLM (Ollama) for actual
+conversation and knowledge — including MCP tool-calling, so it can use real external
+tools when connected to one — OS-level automation (open/close/list applications),
+serial/Arduino hardware I/O with EMG muscle-activity sensing for robotics/exoskeleton
+projects, honest historical market backtesting (including an out-of-sample ML strategy
+signal) and live indicator charts/news search, parametric computational-design geometry
+export for 3D printing, ambient vision (face presence + scene-change watching, off by
+default), offline model vendoring, and a self-modify pipeline that drafts and
+sandbox-tests its own patches but never applies — or commits/pushes — one without gated
+human approval. Every action that changes system state outside the conversation
+(launching an app, sending a serial command, applying a self-modify proposal) goes
+through `security.py`'s `SecurityGate` first.
 
 ---
 

@@ -46,6 +46,14 @@ hiddenimports = [
     "skimage",
     "pypdf",
     "docx",
+    # ambient vision (modules/scene_watch.py) + market_analysis.py's
+    # ml_signal + the GUI's Markets tab, added after the first real build
+    "transformers",
+    "timm",
+    "einops",
+    "sklearn",
+    "matplotlib",
+    "matplotlib.backends.backend_qtagg",
 ]
 
 block_cipher = None
