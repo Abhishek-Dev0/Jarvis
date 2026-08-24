@@ -38,3 +38,8 @@ opencv-python
 # document text extraction (modules/documents.py) — PDF and Word, no OCR
 pypdf
 python-docx
+
+# desktop GUI (gui/) — PySide6 for the app itself, pyinstaller to package it
+# into an installable .exe (see packaging/)
+pyside6
+pyinstaller

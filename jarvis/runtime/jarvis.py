@@ -658,7 +658,7 @@ class Jarvis:
             print("\n[jarvis] shutdown")
 
 
-def main():
+def _build_arg_parser():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default=os.path.join(_PKG_DIR, "checkpoints", "best.pt"))
@@ -742,12 +742,24 @@ def main():
                          "(on by default — hand that file to Claude to diagnose an issue instead "
                          "of a screenshot; known secret-revealing lines are redacted before they "
                          "reach the file, see _LOG_REDACTIONS)")
-    args = ap.parse_args()
+    return ap
 
-    if not args.no_session_log:
-        log_path = _start_session_log()
-        print(f"[jarvis] session log: {log_path}")
 
+def build_jarvis(args, register_io: bool = True):
+    """Constructs a fully-wired Jarvis instance from parsed args: loads the
+    model, registers every skill module, and (when register_io=True, the
+    console path) registers Console/Speech I/O modules too.
+
+    register_io=False is the GUI path: the GUI supplies its own I/O (a chat
+    panel instead of stdin/stdout, on-demand mic capture instead of a
+    blocking listen() loop) rather than registering ConsoleInput/Output or
+    SpeechInput/Output. Voice engines are still constructed when
+    args.voice is set and stashed as j.whisper_engine / j.persona_engine so
+    the GUI can drive them on demand (push-to-talk / speak-a-reply).
+
+    Returns (jarvis_instance, scanner_or_None) — the caller is responsible
+    for scanner.stop() on shutdown if a scanner was started.
+    """
     print("Analyzing system specifications...")
     from jarvis.modules import hardware
     _profile = hardware.detect()
@@ -759,6 +771,9 @@ def main():
                chat_mode=args.chat_mode, admin_name=args.admin_name)
     j.gen_kwargs["temperature"] = args.temperature
     j.load_model()
+
+    j.whisper_engine = None
+    j.persona_engine = None
 
     if not args.no_mascot:
         from jarvis.modules.mascot import CatMascot
@@ -784,8 +799,11 @@ def main():
             print(f"[jarvis] whisper on {whisper_device} failed ({e}), falling back to cpu")
             whisper_engine = WhisperSTTEngine(model_size=whisper_model, device="cpu")
         persona_engine = PersonaTTSEngine(persona=args.persona, default_lang=args.lang)
-        j.register(SpeechInput(engine=whisper_engine, mascot=j.mascot))
-        j.register(SpeechOutput(engine=persona_engine, mascot=j.mascot))
+        j.whisper_engine = whisper_engine
+        j.persona_engine = persona_engine
+        if register_io:
+            j.register(SpeechInput(engine=whisper_engine, mascot=j.mascot))
+            j.register(SpeechOutput(engine=persona_engine, mascot=j.mascot))
         # mic+tts here mean authorize() prompts by voice and listens for the
         # passphrase instead of calling getpass() — required since a
         # background launch (see launch_jarvis.vbs) has no stdin to read.
@@ -797,9 +815,10 @@ def main():
         except Exception as e:
             print(f"[jarvis] translation unavailable ({e}) — non-English speech "
                   f"will be transcribed but not bridged to the (English-only) model")
-    else:
+    elif register_io:
         j.register(ConsoleInput())
-    j.register(ConsoleOutput())
+    if register_io:
+        j.register(ConsoleOutput())
     j.register(CalculatorSkill())
     j.register(WebSearchSkill())
     j.register(WebGrowthSkill(data_dir=os.path.join(_PKG_DIR, "data", "web")))
@@ -848,6 +867,17 @@ def main():
             print(f"[jarvis] self-modify autonomous scanner running every "
                   f"{args.self_modify_scan_interval}s — drafts+tests only, never applies")
 
+    return j, scanner
+
+
+def main():
+    args = _build_arg_parser().parse_args()
+
+    if not args.no_session_log:
+        log_path = _start_session_log()
+        print(f"[jarvis] session log: {log_path}")
+
+    j, scanner = build_jarvis(args, register_io=True)
     try:
         j.run()
     finally:

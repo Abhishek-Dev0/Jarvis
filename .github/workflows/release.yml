@@ -1,0 +1,37 @@
+name: Release
+
+# Tag a version (git tag v0.1.0 && git push origin v0.1.0) and this builds
+# the real Windows installer and attaches it to a GitHub Release — the
+# "repo has one downloadable file" piece.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r jarvis/requirements.txt
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: powershell -File packaging/build.ps1
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Jarvis-Setup.exe

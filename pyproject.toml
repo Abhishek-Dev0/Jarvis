@@ -19,10 +19,12 @@ dependencies = [
   "mcp",
   "yfinance",
   "scikit-image",
+  "pyside6",
 ]
 
 [project.scripts]
 jarvis = "jarvis.runtime.jarvis:main"
+jarvis-gui = "jarvis.gui.app:main"
 
 [tool.setuptools]
-packages = ["jarvis", "jarvis.core", "jarvis.modules", "jarvis.runtime"]
+packages = ["jarvis", "jarvis.core", "jarvis.modules", "jarvis.runtime", "jarvis.gui"]

@@ -90,6 +90,36 @@ disable any individual module (os control, hardware, MCP, market analysis, reaso
 
 ---
 
+## Desktop app (GUI)
+
+```
+python -m jarvis.gui
+```
+
+A real window (PySide6, dark VS-Code-inspired theme) instead of a console: a
+persona dropdown (Jarvis/Eve) in the toolbar, a sidebar with a live on/off toggle
+for every registered capability (flip one mid-session, no restart — see
+`modules/base.py`'s `Module.enabled`), and four tabs — **Chat** (with a mic
+button + spoken replies when voice is available), **Terminal** (a real command
+runner — `QProcess` + scrollback, not a full pty emulator), **Self-Modify**
+(browse proposals, see the diff, Approve / Reject / **Commit & Push to GitHub**
+— the last one asks for your passphrase and, once verified, actually commits
+and pushes the staged change), and **Status** (on-demand health check).
+
+Sidebar toggle state persists to `data/gui_prefs.json` (gitignored, per-machine)
+between launches. It drives the exact same `Jarvis` instance/`build_jarvis()`
+the console frontend does (`runtime/jarvis.py`) — no second backend, no IPC.
+
+**Packaging a real installer:** `powershell -File packaging\build.ps1` runs
+PyInstaller (`--onedir` — torch/whisper/insightface make `--onefile`'s
+every-launch self-extraction genuinely slow) then Inno Setup, producing
+`dist\Jarvis-Setup.exe`. Inno Setup itself isn't a pip package — install it
+once, free, from [jrsoftware.org](https://jrsoftware.org/isdl.php). Push a
+`v*` tag and `.github/workflows/release.yml` builds and attaches the
+installer to a GitHub Release automatically.
+
+---
+
 ## Beyond the core model
 
 The from-scratch model is JARVIS's identity layer, not its only source of capability —

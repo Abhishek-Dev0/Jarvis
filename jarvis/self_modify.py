@@ -388,7 +388,7 @@ def create_proposal(target_path: str, instruction: str, source: str = "on_demand
     return proposal
 
 
-def approve(proposal_id: str, security_ref=None, is_admin_ref=None) -> str:
+def approve(proposal_id: str, security_ref=None, is_admin_ref=None, passphrase_provider=None) -> str:
     """The gated merge step. Stages the proposed content into the REAL
     working tree file — does not `git add`/`git commit`/push. That stays a
     separate, deliberate act for Abi, same as this repo's own git rules."""
@@ -400,7 +400,7 @@ def approve(proposal_id: str, security_ref=None, is_admin_ref=None) -> str:
     if is_protected(proposal["target_path"]):
         return f"Refusing — '{proposal['target_path']}' is protected."  # should be unreachable, defense in depth
     if not authorize_action(f"apply self-modify proposal {proposal_id} to {proposal['target_path']}",
-                             security_ref, is_admin_ref):
+                             security_ref, is_admin_ref, passphrase_provider=passphrase_provider):
         return "Denied — couldn't verify you for applying this proposal."
 
     abspath = os.path.join(_REPO_ROOT, proposal["target_path"])
@@ -409,7 +409,8 @@ def approve(proposal_id: str, security_ref=None, is_admin_ref=None) -> str:
     proposal["status"] = "applied"
     _save_proposal(proposal)
     return (f"Applied to {proposal['target_path']} — staged in your working tree, NOT committed. "
-            f"Review with `git diff` and commit yourself when you're satisfied.")
+            f"Review with `git diff`, then \"commit proposal {proposal_id}\" to push it to GitHub "
+            f"yourself when you're satisfied.")
 
 
 def reject(proposal_id: str, reason: str = "") -> str:
@@ -421,6 +422,47 @@ def reject(proposal_id: str, reason: str = "") -> str:
         proposal["reject_reason"] = reason
     _save_proposal(proposal)
     return f"Rejected proposal '{proposal_id}'."
+
+
+def commit_and_push(proposal_id: str, security_ref=None, is_admin_ref=None, passphrase_provider=None) -> str:
+    """Commits and pushes an already-approved (status == "applied")
+    proposal's staged change to the GitHub remote. A second, separately
+    gated action from approve() — pushing to the shared repo is at least as
+    consequential as staging the change locally, so it asks again rather
+    than riding on the first approval. This is the GUI's "does this look
+    good enough to commit to the repo?" step, built on the same
+    authorize_action() mechanism as every other irreversible action here."""
+    proposal = load_proposal(proposal_id)
+    if proposal is None:
+        return f"No proposal '{proposal_id}'."
+    if proposal["status"] != "applied":
+        return f"Proposal '{proposal_id}' is '{proposal['status']}', not applied yet — approve it first."
+    if not authorize_action(f"commit and push self-modify proposal {proposal_id} "
+                             f"({proposal['target_path']}) to the GitHub repo",
+                             security_ref, is_admin_ref, passphrase_provider=passphrase_provider):
+        return "Denied — couldn't verify you for pushing this to GitHub."
+
+    target = proposal["target_path"]
+    message = f"self-modify: {proposal['instruction']} (proposal {proposal_id})"
+    try:
+        subprocess.run(["git", "add", target], cwd=_REPO_ROOT, check=True,
+                        capture_output=True, text=True, timeout=30)
+        commit = subprocess.run(["git", "commit", "-m", message], cwd=_REPO_ROOT,
+                                 capture_output=True, text=True, timeout=30)
+        if commit.returncode != 0:
+            return f"Nothing to commit or commit failed: {(commit.stdout + commit.stderr).strip()}"
+        push = subprocess.run(["git", "push"], cwd=_REPO_ROOT,
+                               capture_output=True, text=True, timeout=60)
+        if push.returncode != 0:
+            return f"Committed locally but push failed: {push.stderr.strip()}"
+    except subprocess.CalledProcessError as e:
+        return f"git command failed: {(e.stderr or '').strip()}"
+    except subprocess.TimeoutExpired:
+        return "git command timed out"
+
+    proposal["status"] = "committed"
+    _save_proposal(proposal)
+    return f"Committed and pushed {target} to GitHub (proposal {proposal_id})."
 
 
 # --------------------------------------------------------------- autonomous
@@ -478,15 +520,18 @@ _LIST_TRIGGERS = {"list proposals", "list self-modify proposals", "list pending 
 _SHOW_PREFIX = "show proposal "
 _APPROVE_PREFIX = "approve proposal "
 _REJECT_PREFIX = "reject proposal "
+_COMMIT_PREFIX = "commit proposal "
 
 
 class SelfModifySkill(SkillModule):
     """Conversational surface. "propose fix <path>: <instruction>",
     "list proposals", "show proposal <id>", "approve proposal <id>"
-    (gated), "reject proposal <id>"."""
+    (gated), "reject proposal <id>", "commit proposal <id>" (gated,
+    only after approval — commits+pushes the staged change to GitHub)."""
 
     name = "self_modify"
-    description = "drafts, sandbox-tests, and (with approval) applies code changes to JARVIS itself"
+    description = ("drafts, sandbox-tests, and (with approval) applies code changes to JARVIS "
+                    "itself, then (with a second approval) commits and pushes them to GitHub")
     priority = 9
 
     def __init__(self, security_ref=None, is_admin_ref=None,
@@ -509,7 +554,7 @@ class SelfModifySkill(SkillModule):
         if t in _LIST_TRIGGERS:
             return True
         return any(t.startswith(p) for p in
-                   (_PROPOSE_PREFIX, _SHOW_PREFIX, _APPROVE_PREFIX, _REJECT_PREFIX))
+                   (_PROPOSE_PREFIX, _SHOW_PREFIX, _APPROVE_PREFIX, _REJECT_PREFIX, _COMMIT_PREFIX))
 
     def handle(self, text: str) -> str:
         t = text.strip()
@@ -544,6 +589,10 @@ class SelfModifySkill(SkillModule):
         if low.startswith(_REJECT_PREFIX):
             pid = t[len(_REJECT_PREFIX):].strip()
             return reject(pid)
+
+        if low.startswith(_COMMIT_PREFIX):
+            pid = t[len(_COMMIT_PREFIX):].strip()
+            return commit_and_push(pid, self.security_ref, self.is_admin_ref)
 
         if low.startswith(_PROPOSE_PREFIX):
             rest = t[len(_PROPOSE_PREFIX):].strip()

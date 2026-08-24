@@ -57,3 +57,13 @@ jarvis/data/self_modify/
 # per machine rather than commit (Start JARVIS.bat + assets/jarvis_cat.ico
 # stay in git; the .lnk files pointing at their absolute path don't)
 *.lnk
+
+# PyInstaller build output (packaging/build.ps1) — regenerated from
+# packaging/jarvis_gui.spec, published as a GitHub Release asset instead of
+# committed (see .github/workflows/release.yml)
+/dist/
+/build/
+
+# per-machine GUI sidebar toggle state (gui/main_window.py) — personal,
+# same reasoning as data/memory.json
+jarvis/data/gui_prefs.json

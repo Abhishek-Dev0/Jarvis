@@ -24,6 +24,10 @@ from typing import Any
 class Module(ABC):
     name: str = "unnamed"
     description: str = ""
+    # Live on/off switch a frontend (e.g. the GUI's sidebar toggles) can
+    # flip at any time — unlike register()/teardown_all(), this needs no
+    # setup()/teardown() churn, so it's safe to click mid-session.
+    enabled: bool = True
 
     def setup(self) -> None:
         """Called once at startup. Load files, open devices, warm caches."""
@@ -103,6 +107,8 @@ class Registry:
 
     def find_skill(self, text: str) -> SkillModule | None:
         for s in self.skills:
+            if not s.enabled:
+                continue
             try:
                 if s.matches(text):
                     return s

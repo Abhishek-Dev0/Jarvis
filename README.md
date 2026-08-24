@@ -91,6 +91,13 @@ every flag — voice persona/language, whisper/reasoning model overrides, and `-
 switches to disable any individual module (os control, hardware, MCP, market
 analysis, reasoning, self-modify).
 
+There's also a real desktop app now — `python -m jarvis.gui` (dark theme, persona
+switch, a live on/off toggle per capability, chat+mic, a terminal panel, and a
+Self-Modify tab with a Commit & Push to GitHub button). See
+[jarvis/README.md's "Desktop app (GUI)" section](jarvis/README.md#desktop-app-gui)
+for the details, and `packaging/build.ps1` to build an installable
+`Jarvis-Setup.exe`.
+
 ---
 
 ## Getting started interactively

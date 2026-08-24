@@ -338,7 +338,7 @@ def enroll(passphrase: str | None = None, voice_audio: np.ndarray | None = None,
         print("[security] voiceprint enrolled from the same recording.")
 
 
-def authorize_action(reason: str, security_ref=None, is_admin_ref=None) -> bool:
+def authorize_action(reason: str, security_ref=None, is_admin_ref=None, passphrase_provider=None) -> bool:
     """Shared gating check for skill modules that need SecurityGate
     verification before a state-changing action (os_control.py,
     hardware_io.py, mcp_client.py all had their own copy of exactly this
@@ -348,12 +348,15 @@ def authorize_action(reason: str, security_ref=None, is_admin_ref=None) -> bool:
     a live reference (main() may swap Jarvis.security after construction).
     is_admin_ref: () -> bool; an already-verified admin session (see
     Jarvis.run()'s wake_challenge) skips re-authorizing every action.
+    passphrase_provider: optional () -> str, forwarded to
+    SecurityGate.authorize() — see there for why (getpass() has no console
+    to read from in a windowed GUI app).
     """
     if is_admin_ref is not None and is_admin_ref():
         return True
     if security_ref is None:
         return False
-    return security_ref().authorize(reason)
+    return security_ref().authorize(reason, passphrase_provider=passphrase_provider)
 
 
 class SecurityGate:
@@ -451,7 +454,12 @@ class SecurityGate:
 
         return self.authorize("become admin")
 
-    def authorize(self, reason: str) -> bool:
+    def authorize(self, reason: str, passphrase_provider=None) -> bool:
+        """passphrase_provider: optional () -> str, used instead of
+        getpass.getpass() to collect a typed passphrase when self.mic_engine
+        is None. Console mode never passes one (getpass works fine from a
+        real terminal); the GUI does (see gui/main_window.py) — a windowed
+        app has no console for getpass to read from at all."""
         if not is_enrolled():
             self._say(f"'{reason}' requires verification, but nothing is enrolled yet. "
                        f"Run: python -m jarvis.security enroll")
@@ -486,7 +494,11 @@ class SecurityGate:
             else:
                 print(f"[security] verification required for: {reason}"
                       if attempt == 0 else "[security] that didn't match, try again")
-                passed = self._check_passphrase(getpass.getpass("Passphrase: "))
+                get_passphrase = passphrase_provider or (lambda: getpass.getpass("Passphrase: "))
+                typed = get_passphrase()
+                if not typed:
+                    continue  # e.g. GUI dialog cancelled -> falls through to retry/denial
+                passed = self._check_passphrase(typed)
             if passed:
                 break
 
