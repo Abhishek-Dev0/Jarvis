@@ -12,6 +12,8 @@
 
 import os
 
+from PyInstaller.utils.hooks import collect_data_files
+
 REPO_ROOT = os.path.dirname(os.path.abspath(SPECPATH))
 
 datas = [
@@ -19,6 +21,20 @@ datas = [
     (os.path.join(REPO_ROOT, "jarvis", "checkpoints", "best.pt"), "jarvis/checkpoints"),
     (os.path.join(REPO_ROOT, "assets", "jarvis_cat.ico"), "assets"),
 ]
+
+# Real bug found in the built app: faster_whisper's bundled VAD model
+# (assets/silero_vad_v6.onnx, shipped INSIDE the pip package) was silently
+# missing at runtime -- ONNXRuntimeError: NO_SUCHFILE. None of these four
+# packages have a PyInstaller hook (confirmed: zero "hook-<name>" lines in
+# a full build log), so hiddenimports alone was never enough -- it collects
+# Python modules, not a package's bundled non-Python data files. Same root
+# cause almost certainly affects the others; collect_data_files() is the
+# correct general fix, not a per-file patch.
+for _pkg in ("faster_whisper", "speechbrain", "kokoro_onnx", "insightface"):
+    try:
+        datas += collect_data_files(_pkg)
+    except Exception:
+        pass
 
 # jarvis/data/models/ (Piper/Kokoro TTS weights) — bundled whole so voice
 # output works out of the box with no first-run download. Large (several

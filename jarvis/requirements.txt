@@ -1,3 +1,15 @@
+# torch: install a CUDA build, not the plain "torch" CPU wheel, if this
+# machine has an NVIDIA GPU -- e.g. (Python 3.14, the version this project
+# targets, only has CUDA wheels up to the cu128 index as of this writing):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# A CPU-only torch here silently disables CUDA everywhere that checks
+# torch.cuda.is_available() (faster-whisper's device pick, hardware.py's
+# reasoning-model VRAM-budget sizing) -- real bug found in the packaged
+# app: a CPU-only torch got bundled by mistake, which made
+# recommend_reasoning_model() fall back to a RAM-based budget instead of
+# VRAM and pick an oversized model tag. `pip install -r` alone gets the
+# plain torch>=2.0 CPU wheel; run the CUDA install above first if you have
+# an NVIDIA GPU, then `pip install -r requirements.txt` for everything else.
 torch>=2.0
 numpy
 regex

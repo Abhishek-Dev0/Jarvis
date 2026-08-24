@@ -13,10 +13,10 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QSplitter, QTabWidget, QTextEdit, QToolBar, QVBoxLayout,
-    QWidget,
+    QApplication, QCheckBox, QComboBox, QHBoxLayout, QInputDialog, QLabel,
+    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
+    QPlainTextEdit, QPushButton, QSplitter, QTabWidget, QTextEdit, QToolBar,
+    QVBoxLayout, QWidget,
 )
 
 from .markets_tab import MarketsTab
@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self.resize(1150, 760)
         self._build_ui()
         self._wire_output_signals()
+        self._startup_greeting()
 
     # ------------------------------------------------------------- layout
 
@@ -87,6 +88,14 @@ class MainWindow(QMainWindow):
         self.persona_combo.addItems(["Jarvis", "Eve"])
         self.persona_combo.currentTextChanged.connect(self._on_persona_changed)
         toolbar.addWidget(self.persona_combo)
+
+        self.mute_button = QPushButton("\U0001F50A" if self._auto_speak else "\U0001F507")
+        self.mute_button.setObjectName("MuteButton")
+        self.mute_button.setToolTip("Mute spoken replies" if self._auto_speak else "Unmute spoken replies")
+        self.mute_button.setFixedWidth(36)
+        self.mute_button.setEnabled(self.jarvis.persona_engine is not None)
+        self.mute_button.clicked.connect(self._on_mute_toggled)
+        toolbar.addWidget(self.mute_button)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.setCentralWidget(splitter)
@@ -116,8 +125,10 @@ class MainWindow(QMainWindow):
 
         self.skill_list = QListWidget()
         self.skill_list.setObjectName("SkillList")  # see theme.py's #SkillList::item override
+        self.skill_list.itemClicked.connect(self._on_skill_row_clicked)
         layout.addWidget(self.skill_list)
         self._skill_checkboxes = {}
+        self._skill_rows = {}
         # Matches the sidebar's initial splitter width (280px, set in
         # _build_ui) minus its margins/scrollbar. A QLabel's sizeHint() for
         # wrapped text is only accurate once it knows how wide it'll
@@ -127,6 +138,7 @@ class MainWindow(QMainWindow):
         _DESC_WIDTH = 240
         for skill in self.jarvis.registry.skills:
             item = QListWidgetItem(self.skill_list)
+            item.setData(Qt.ItemDataRole.UserRole, skill.name)
             row = QWidget()
             row_layout = QVBoxLayout(row)
             row_layout.setContentsMargins(8, 8, 8, 10)
@@ -144,7 +156,27 @@ class MainWindow(QMainWindow):
             self.skill_list.addItem(item)
             self.skill_list.setItemWidget(item, row)
             self._skill_checkboxes[skill.name] = cb
+            self._skill_rows[skill.name] = row
+            self._style_skill_row(row, skill.enabled)
         return container
+
+    def _style_skill_row(self, row: QWidget, enabled: bool):
+        # "Click it, it turns green" instead of just a checkmark -- the
+        # checkbox still exists (real toggle state + accessible click
+        # target), this is the row-level highlight on top of it.
+        if enabled:
+            row.setStyleSheet(
+                "background-color: rgba(0, 230, 160, 0.10); "
+                "border-left: 3px solid #00e6a0;"
+            )
+        else:
+            row.setStyleSheet("background-color: transparent; border-left: 3px solid transparent;")
+
+    def _on_skill_row_clicked(self, item: QListWidgetItem):
+        name = item.data(Qt.ItemDataRole.UserRole)
+        cb = self._skill_checkboxes.get(name)
+        if cb is not None:
+            cb.setChecked(not cb.isChecked())
 
     def _build_chat_tab(self) -> QWidget:
         widget = QWidget()
@@ -258,6 +290,9 @@ class MainWindow(QMainWindow):
         skill.enabled = checked
         self.prefs.setdefault("skills", {})[skill.name] = checked
         _save_prefs(self.prefs_path, self.prefs)
+        row = self._skill_rows.get(skill.name)
+        if row is not None:
+            self._style_skill_row(row, checked)
 
     # ------------------------------------------------------------ persona
 
@@ -265,6 +300,56 @@ class MainWindow(QMainWindow):
         persona = text.strip().lower()
         if hasattr(self.jarvis, "_switch_persona"):
             self.jarvis._switch_persona(persona)
+
+    def _on_mute_toggled(self):
+        self._auto_speak = not self._auto_speak
+        self.mute_button.setText("\U0001F50A" if self._auto_speak else "\U0001F507")
+        self.mute_button.setToolTip("Mute spoken replies" if self._auto_speak else "Unmute spoken replies")
+
+    # ---------------------------------------------------------- first run
+
+    def _startup_greeting(self):
+        """Real bug report handled here too: Abi's screenshot showed the
+        reasoning model auto-sized to qwen2.5:7b on what should be a
+        4GB-VRAM machine -- traced to a CPU-only torch bundled in the
+        packaged app, so hardware.detect()'s has_cuda was always False and
+        recommend_reasoning_model() fell back to a RAM budget instead of
+        VRAM. Fixed at the packaging level (see requirements.txt); this
+        method is the "tell the user what was detected and what it means"
+        half of that same ask -- hardware specs + a plain CUDA/no-CUDA
+        speed expectation, spoken if voice is available (mute button above
+        turns that off), shown either way."""
+        try:
+            from ..modules import hardware
+        except ImportError:  # pragma: no cover - legacy direct execution
+            from modules import hardware
+        profile = hardware.detect()
+        if profile["has_cuda"]:
+            hw_line = (f"Hardware detected: {profile['gpu_name']} ({profile['vram_gb']} GB VRAM), "
+                       f"CUDA available — responses should be fast.")
+        else:
+            hw_line = ("Hardware detected: no CUDA GPU — running on CPU. Responses (especially "
+                       "voice and the local reasoning model) will be slower.")
+
+        name = self.prefs.get("user_name")
+        # QInputDialog.getText() blocks on a real event loop response --
+        # harmless in a real windowed session, but hangs forever under the
+        # offscreen platform used for headless/automated testing (no user
+        # to click OK). Skip the prompt there, same as every other
+        # headless-safe check in this test suite.
+        headless = QApplication.instance() is not None and QApplication.instance().platformName() == "offscreen"
+        if not name and not headless:
+            typed, ok = QInputDialog.getText(self, "Welcome", "What would you like me to call you?")
+            name = typed.strip() if ok and typed.strip() else None
+            if name:
+                self.prefs["user_name"] = name
+                _save_prefs(self.prefs_path, self.prefs)
+
+        greeting = f"Systems online, {name}." if name else "Systems online."
+        message = f"{greeting} {hw_line}"
+        self._append_message("system", message)
+        if self._auto_speak and self.jarvis.persona_engine is not None:
+            self._speak(message)
 
     # --------------------------------------------------------------- chat
 
