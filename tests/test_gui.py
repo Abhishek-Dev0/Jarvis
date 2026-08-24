@@ -12,12 +12,20 @@ from PySide6.QtWidgets import QApplication
 
 from jarvis.gui.io_adapter import GuiOutput
 from jarvis.gui.main_window import MainWindow
+from jarvis.gui.theme import STYLESHEET
 from jarvis.modules.base import Registry, SkillModule
 
 
 @pytest.fixture(scope="module")
 def qapp():
+    # Applies the real theme stylesheet -- not cosmetic here: a prior real
+    # bug (QListWidget::item's global padding silently shrinking the
+    # sidebar's custom row widgets below their own sizeHint, clipping
+    # descriptions) only reproduces with the actual stylesheet applied, the
+    # same way it only showed up in a real screenshot, not a plain widget
+    # inspection. See test_sidebar_row_widgets_are_not_clipped_by_item_padding.
     app = QApplication.instance() or QApplication([])
+    app.setStyleSheet(STYLESHEET)
     yield app
 
 
@@ -141,6 +149,31 @@ def test_status_tab_renders_health_skill_output(qapp, tmp_path):
 
     window._refresh_status()
     assert "all systems nominal" in window.status_view.toPlainText()
+
+
+def test_sidebar_row_widgets_are_not_clipped_by_item_padding(qapp, tmp_path):
+    # Regression test for a real bug found via an actual screenshot: the
+    # theme's global "QListWidget::item { padding: 6px 8px; }" rule was
+    # stacking on top of each sidebar row's own margins, shrinking the
+    # widget below what item.setSizeHint() had reported and clipping the
+    # last line of any multi-line description (e.g. self_modify's). Fixed
+    # via the #SkillList::item override in theme.py. Assert the actual
+    # allocated widget height matches the item's slot height (within the
+    # 1px divider border), for a description long enough to wrap 3+ lines.
+    long_desc = ("drafts, sandbox-tests, and (with approval) applies code changes to JARVIS "
+                 "itself, then (with a second approval) commits and pushes them to GitHub")
+    skill = _FakeSkill("self_modify", long_desc)
+    j = _FakeJarvis([skill])
+    gui_output = GuiOutput()
+    j.registry.outputs.append(gui_output)
+    window = MainWindow(j, gui_output, str(tmp_path / "prefs.json"))
+    window.show()
+    _pump(200)
+
+    item = window.skill_list.item(0)
+    row = window.skill_list.itemWidget(item)
+    allocated_height = window.skill_list.visualItemRect(item).height()
+    assert row.height() >= allocated_height - 2  # within the 1px border
 
 
 def test_mic_button_disabled_without_a_whisper_engine(qapp, tmp_path):

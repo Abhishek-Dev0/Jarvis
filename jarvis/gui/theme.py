@@ -47,6 +47,15 @@ QListWidget::item {{
 QListWidget::item:selected {{
     background-color: {BG_LIGHTER};
 }}
+/* SkillList's rows are custom widgets (a checkbox + wrapped description
+   label) that already carry their own margins — the generic 6px/8px item
+   padding above stacks on top of those and silently shrinks the space the
+   widget actually gets vs. what its own sizeHint() reported, clipping the
+   last line of any multi-line description. Zero it out here instead. */
+QListWidget#SkillList::item {{
+    padding: 0px;
+    border-bottom: 1px solid {BORDER};
+}}
 QTabWidget::pane {{
     border: none;
     background-color: {BG};

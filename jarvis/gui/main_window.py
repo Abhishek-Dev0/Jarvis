@@ -113,13 +113,22 @@ class MainWindow(QMainWindow):
         layout.addWidget(header)
 
         self.skill_list = QListWidget()
+        self.skill_list.setObjectName("SkillList")  # see theme.py's #SkillList::item override
         layout.addWidget(self.skill_list)
         self._skill_checkboxes = {}
+        # Matches the sidebar's initial splitter width (280px, set in
+        # _build_ui) minus its margins/scrollbar. A QLabel's sizeHint() for
+        # wrapped text is only accurate once it knows how wide it'll
+        # actually render -- an unconstrained label sizeHints itself as if
+        # on one line. Pinning the width makes heightForWidth resolve
+        # deterministically before setSizeHint() below reads it.
+        _DESC_WIDTH = 240
         for skill in self.jarvis.registry.skills:
             item = QListWidgetItem(self.skill_list)
             row = QWidget()
             row_layout = QVBoxLayout(row)
-            row_layout.setContentsMargins(8, 6, 8, 6)
+            row_layout.setContentsMargins(8, 8, 8, 10)
+            row_layout.setSpacing(4)
             cb = QCheckBox(skill.name)
             cb.setChecked(skill.enabled)
             cb.toggled.connect(lambda checked, s=skill: self._on_skill_toggled(s, checked))
@@ -127,6 +136,7 @@ class MainWindow(QMainWindow):
             desc = QLabel(skill.description)
             desc.setObjectName("SkillDescription")
             desc.setWordWrap(True)
+            desc.setFixedWidth(_DESC_WIDTH)
             row_layout.addWidget(desc)
             item.setSizeHint(row.sizeHint())
             self.skill_list.addItem(item)
