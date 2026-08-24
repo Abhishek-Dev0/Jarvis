@@ -59,3 +59,7 @@ einops
 # training prefix and evaluated only out-of-sample. pandas comes along with
 # yfinance already; scikit-learn is the one new dependency this needed.
 scikit-learn
+
+# GUI Markets tab (gui/markets_tab.py) — indicator charts embedded in the
+# desktop app via matplotlib's Qt backend, no separate web server/process
+matplotlib

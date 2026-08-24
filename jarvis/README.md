@@ -99,12 +99,17 @@ python -m jarvis.gui
 A real window (PySide6, dark VS-Code-inspired theme) instead of a console: a
 persona dropdown (Jarvis/Eve) in the toolbar, a sidebar with a live on/off toggle
 for every registered capability (flip one mid-session, no restart — see
-`modules/base.py`'s `Module.enabled`), and four tabs — **Chat** (with a mic
+`modules/base.py`'s `Module.enabled`), and five tabs — **Chat** (with a mic
 button + spoken replies when voice is available), **Terminal** (a real command
-runner — `QProcess` + scrollback, not a full pty emulator), **Self-Modify**
-(browse proposals, see the diff, Approve / Reject / **Commit & Push to GitHub**
-— the last one asks for your passphrase and, once verified, actually commits
-and pushes the staged change), and **Status** (on-demand health check).
+runner — `QProcess` + scrollback, not a full pty emulator), **Markets**
+(symbol/timeframe picker, a watchlist, matplotlib-embedded price+SMA+Bollinger/
+volume/RSI/MACD charts, and a News sub-tab — live web search results, no
+scraper of its own, reusing `modules/web.py`'s existing search; all of it
+purely informational, same "no accuracy claims, no recommendations" standard
+as `modules/market_analysis.py`'s backtesting), **Self-Modify** (browse
+proposals, see the diff, Approve / Reject / **Commit & Push to GitHub** — the
+last one asks for your passphrase and, once verified, actually commits and
+pushes the staged change), and **Status** (on-demand health check).
 
 Sidebar toggle state persists to `data/gui_prefs.json` (gitignored, per-machine)
 between launches. It drives the exact same `Jarvis` instance/`build_jarvis()`

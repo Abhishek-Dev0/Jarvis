@@ -41,6 +41,9 @@ exact same standard as sma_crossover.
 
 from __future__ import annotations
 
+import json
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -48,6 +51,9 @@ try:
     from .base import SkillModule
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+
+_PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_WATCHLIST_PATH = os.path.join(_PKG_DIR, "data", "watchlist.json")
 
 DISCLAIMER = (
     "This is a backtest on historical data using a simple, published strategy "
@@ -162,6 +168,112 @@ _STRATEGY_NOTES = {
         "it trained on would be look-ahead bias, not a real backtest."
     ),
 }
+
+
+# ---------------------------------------------------------------- indicators
+# Display/educational only, for the GUI's Markets tab -- these compute a
+# number and hand it back, nothing here decides a position or claims an
+# edge. Standard, textbook formulas, nothing proprietary.
+
+def sma(close: "pd.Series", window: int) -> "pd.Series":
+    return close.rolling(window).mean()
+
+
+def rsi(close: "pd.Series", period: int = 14) -> "pd.Series":
+    """Wilder's RSI. >70 is traditionally read as overbought, <30 as
+    oversold -- a description of what the number conventionally means, not
+    a signal to act on."""
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    result = 100 - (100 / (1 + rs))
+    # avg_loss==0 divides to NaN above, but it's not actually undefined --
+    # zero losses in the window is the maximally-overbought case (RSI=100),
+    # or neutral (50) if there were no gains either (a flat price). Real
+    # edge case caught by testing a pure uptrend, not assumed handled.
+    no_losses = avg_loss == 0
+    result = result.mask(no_losses & (avg_gain > 0), 100.0)
+    result = result.mask(no_losses & (avg_gain == 0), 50.0)
+    return result
+
+
+def macd(close: "pd.Series", fast: int = 12, slow: int = 26, signal: int = 9):
+    """Returns (macd_line, signal_line, histogram)."""
+    fast_ema = close.ewm(span=fast, adjust=False).mean()
+    slow_ema = close.ewm(span=slow, adjust=False).mean()
+    macd_line = fast_ema - slow_ema
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
+def bollinger_bands(close: "pd.Series", window: int = 20, num_std: float = 2.0):
+    """Returns (upper, middle, lower)."""
+    middle = close.rolling(window).mean()
+    std = close.rolling(window).std()
+    return middle + num_std * std, middle, middle - num_std * std
+
+
+def volatility(close: "pd.Series", window: int = 10) -> "pd.Series":
+    """Annualized rolling volatility of daily returns."""
+    return close.pct_change().rolling(window).std() * np.sqrt(_TRADING_DAYS_PER_YEAR)
+
+
+# --------------------------------------------------------------- watchlist
+# Flat JSON list of symbols, same convention as modules/memory.py's
+# memory.json -- for the GUI's Markets tab.
+
+def load_watchlist(path: str | None = None) -> list[str]:
+    path = path or _WATCHLIST_PATH
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_watchlist(symbols: list[str], path: str | None = None) -> None:
+    path = path or _WATCHLIST_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(symbols, f, indent=2)
+
+
+def add_to_watchlist(symbol: str, path: str | None = None) -> list[str]:
+    symbol = symbol.strip().upper()
+    symbols = load_watchlist(path)
+    if symbol and symbol not in symbols:
+        symbols.append(symbol)
+        save_watchlist(symbols, path)
+    return symbols
+
+
+def remove_from_watchlist(symbol: str, path: str | None = None) -> list[str]:
+    symbol = symbol.strip().upper()
+    symbols = [s for s in load_watchlist(path) if s != symbol]
+    save_watchlist(symbols, path)
+    return symbols
+
+
+# --------------------------------------------------------------------- news
+
+def market_news(query: str, max_results: int = 8) -> list[dict]:
+    """Live web search results for a market/news query -- reuses
+    modules/web.py's existing search() (DuckDuckGo's HTML endpoint, no API
+    key) rather than a new scraper. Returns [{title, url, snippet}] exactly
+    as web.search() does: real headlines and snippets, no rating/ranking
+    by "predictive accuracy" or anything else layered on top -- see the
+    module docstring on why that framing specifically gets refused."""
+    try:
+        from .web import search
+    except ImportError:  # pragma: no cover - legacy direct execution
+        from web import search
+    return search(query, max_results=max_results)
 
 
 # ------------------------------------------------------------------- backtest

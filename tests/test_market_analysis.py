@@ -3,8 +3,9 @@ import pandas as pd
 import pytest
 
 from jarvis.modules.market_analysis import (
-    DISCLAIMER, MarketAnalysisSkill, _STRATEGY_NOTES, backtest, buy_and_hold,
-    format_report, ml_signal, run_backtest, sma_crossover,
+    DISCLAIMER, MarketAnalysisSkill, _STRATEGY_NOTES, backtest,
+    bollinger_bands, buy_and_hold, format_report, macd, ml_signal, rsi,
+    run_backtest, sma_crossover, volatility,
 )
 
 
@@ -119,6 +120,76 @@ def test_skill_handle_defaults_to_sma_crossover_without_a_strategy_name(monkeypa
     sk = MarketAnalysisSkill()
     reply = sk.handle("backtest AAPL")
     assert "sma_crossover" in reply
+
+
+# --------------------------------------------------------------- indicators
+
+def test_rsi_approaches_100_on_a_pure_uptrend():
+    close = pd.Series(range(100, 140))  # strictly increasing -- no losses at all
+    value = rsi(close, period=14)
+    assert value.iloc[-1] > 95
+
+
+def test_rsi_approaches_0_on_a_pure_downtrend():
+    close = pd.Series(range(140, 100, -1))  # strictly decreasing -- no gains at all
+    value = rsi(close, period=14)
+    assert value.iloc[-1] < 5
+
+
+def test_macd_is_flat_zero_on_a_constant_price():
+    close = pd.Series([100.0] * 60)
+    macd_line, signal_line, histogram = macd(close)
+    assert macd_line.iloc[-1] == pytest.approx(0.0, abs=1e-9)
+    assert histogram.iloc[-1] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_bollinger_bands_collapse_to_the_price_when_flat():
+    close = pd.Series([100.0] * 30)
+    upper, middle, lower = bollinger_bands(close, window=20)
+    assert upper.iloc[-1] == pytest.approx(100.0)
+    assert middle.iloc[-1] == pytest.approx(100.0)
+    assert lower.iloc[-1] == pytest.approx(100.0)
+
+
+def test_bollinger_bands_widen_with_more_volatility():
+    calm = pd.Series([100.0, 100.5, 99.5, 100.2, 99.8] * 6)
+    wild = pd.Series([100.0, 110.0, 90.0, 108.0, 92.0] * 6)
+    calm_upper, _, calm_lower = bollinger_bands(calm, window=20)
+    wild_upper, _, wild_lower = bollinger_bands(wild, window=20)
+    assert (wild_upper.iloc[-1] - wild_lower.iloc[-1]) > (calm_upper.iloc[-1] - calm_lower.iloc[-1])
+
+
+def test_volatility_is_zero_for_a_constant_price():
+    close = pd.Series([100.0] * 20)
+    value = volatility(close, window=10)
+    assert value.iloc[-1] == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------- watchlist
+
+def test_watchlist_empty_when_file_absent(tmp_path):
+    from jarvis.modules.market_analysis import load_watchlist
+    assert load_watchlist(str(tmp_path / "missing.json")) == []
+
+
+def test_add_to_watchlist_persists_and_dedupes(tmp_path):
+    from jarvis.modules.market_analysis import add_to_watchlist, load_watchlist
+    path = str(tmp_path / "watchlist.json")
+    add_to_watchlist("aapl", path)
+    add_to_watchlist("BTC-USD", path)
+    add_to_watchlist("AAPL", path)  # same symbol, different case -- must not duplicate
+    assert load_watchlist(path) == ["AAPL", "BTC-USD"]
+
+
+def test_remove_from_watchlist(tmp_path):
+    from jarvis.modules.market_analysis import (
+        add_to_watchlist, load_watchlist, remove_from_watchlist,
+    )
+    path = str(tmp_path / "watchlist.json")
+    add_to_watchlist("AAPL", path)
+    add_to_watchlist("MSFT", path)
+    remove_from_watchlist("aapl", path)
+    assert load_watchlist(path) == ["MSFT"]
 
 
 def test_format_report_always_includes_disclaimer():

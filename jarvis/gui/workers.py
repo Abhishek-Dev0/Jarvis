@@ -109,3 +109,52 @@ class CommandWorker(QThread):
     def stop(self):
         if self._process is not None and self._process.poll() is None:
             self._process.terminate()
+
+
+class MarketDataWorker(QThread):
+    """Fetches historical OHLCV (yfinance, via modules/market_analysis.py's
+    fetch_history) off the UI thread -- real network I/O, would freeze the
+    window otherwise. Used by the GUI's Markets tab."""
+
+    finished_ok = Signal(object)  # pandas DataFrame
+    failed = Signal(str)
+
+    def __init__(self, symbol: str, period: str, parent=None):
+        super().__init__(parent)
+        self.symbol = symbol
+        self.period = period
+
+    def run(self):
+        try:
+            try:
+                from ..modules.market_analysis import fetch_history
+            except ImportError:  # pragma: no cover - legacy direct execution
+                from modules.market_analysis import fetch_history
+            df = fetch_history(self.symbol, period=self.period)
+            self.finished_ok.emit(df)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class NewsSearchWorker(QThread):
+    """Live web search (modules/market_analysis.py's market_news(), which
+    just calls modules/web.py's existing search() -- no new scraper) off
+    the UI thread. Used by the GUI's Markets tab news panel."""
+
+    finished_ok = Signal(list)  # [{title, url, snippet}]
+    failed = Signal(str)
+
+    def __init__(self, query: str, parent=None):
+        super().__init__(parent)
+        self.query = query
+
+    def run(self):
+        try:
+            try:
+                from ..modules.market_analysis import market_news
+            except ImportError:  # pragma: no cover - legacy direct execution
+                from modules.market_analysis import market_news
+            results = market_news(self.query)
+            self.finished_ok.emit(results)
+        except Exception as e:
+            self.failed.emit(str(e))

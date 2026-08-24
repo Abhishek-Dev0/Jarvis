@@ -73,3 +73,7 @@ jarvis/data/gui_prefs.json
 # as data/security/ and data/memory.json
 jarvis/data/known_faces/
 jarvis/data/vision_events.json
+
+# GUI Markets tab watchlist (modules/market_analysis.py) — personal, same
+# reasoning as gui_prefs.json
+jarvis/data/watchlist.json

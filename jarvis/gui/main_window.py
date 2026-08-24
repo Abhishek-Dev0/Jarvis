@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .markets_tab import MarketsTab
 from .workers import CommandWorker, ListenWorker, RespondWorker, SpeakWorker
 
 try:
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_chat_tab(), "Chat")
         self.tabs.addTab(self._build_terminal_tab(), "Terminal")
+        self.tabs.addTab(MarketsTab(), "Markets")
         self.tabs.addTab(self._build_self_modify_tab(), "Self-Modify")
         self.tabs.addTab(self._build_status_tab(), "Status")
         splitter.addWidget(self.tabs)
