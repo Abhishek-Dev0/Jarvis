@@ -135,6 +135,14 @@ def _get_face_app():
     return _face_app
 
 
+def get_face_app():
+    """Public accessor for the shared, lazily-loaded FaceAnalysis instance
+    — for other modules (e.g. modules/scene_watch.py's ambient presence
+    detection) that need face detection/embedding too. Reuses the same
+    loaded model rather than each caller loading its own copy."""
+    return _get_face_app()
+
+
 def _face_embed(frame) -> np.ndarray | None:
     """frame: a BGR image array (e.g. straight from cv2.VideoCapture.read()).
     Returns the L2-normalized embedding of the largest detected face, or

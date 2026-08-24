@@ -30,6 +30,7 @@ try:
     from jarvis.modules.memory import MemorySkill
     from jarvis.modules.fileread import FileReadSkill
     from jarvis.modules.vision import VisionSkill
+    from jarvis.modules.scene_watch import SceneWatchSkill
     from jarvis.modules.documents import DocumentSkill
     from jarvis.modules.search_index import SearchIndexSkill
     from jarvis.security import SecurityGate
@@ -51,6 +52,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     from modules.memory import MemorySkill
     from modules.fileread import FileReadSkill
     from modules.vision import VisionSkill
+    from modules.scene_watch import SceneWatchSkill
     from modules.documents import DocumentSkill
     from modules.search_index import SearchIndexSkill
     from security import SecurityGate
@@ -734,6 +736,11 @@ def _build_arg_parser():
                          "measured at ~2.5s/image on a 4GB-VRAM GPU once warm)")
     ap.add_argument("--no-vision", action="store_true",
                     help="disable the vision skill — read-only, no effect on any other capability")
+    ap.add_argument("--vision-watch", action="store_true",
+                    help="start ambient camera watching (face presence + scene-change events, "
+                         "modules/scene_watch.py) running from launch — off by default, same as "
+                         "--voice/--self-modify-autoscan; toggle it live from the GUI sidebar "
+                         "instead if you'd rather not have the camera on by default")
     ap.add_argument("--no-mascot", action="store_true",
                     help="disable the animated terminal cat (modules/mascot.py) — purely "
                          "cosmetic, no effect on any actual capability")
@@ -842,6 +849,10 @@ def build_jarvis(args, register_io: bool = True):
     j.register(FileReadSkill())
     if not args.no_vision:
         j.register(VisionSkill(model=args.vision_model))
+    scene_watch_skill = SceneWatchSkill()
+    j.register(scene_watch_skill)
+    if args.vision_watch:
+        scene_watch_skill.enabled = True
     j.register(DocumentSkill())
     j.register(SearchIndexSkill())
     reasoning_model = args.reasoning_model
@@ -883,6 +894,9 @@ def main():
     finally:
         if scanner is not None:
             scanner.stop()
+        for skill in j.registry.skills:
+            if skill.name == "scene_watch":
+                skill.enabled = False  # releases the camera if it was on; no-op otherwise
         if not args.no_session_log:
             _stop_session_log()
 

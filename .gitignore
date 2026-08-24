@@ -67,3 +67,9 @@ jarvis/data/self_modify/
 # per-machine GUI sidebar toggle state (gui/main_window.py) — personal,
 # same reasoning as data/memory.json
 jarvis/data/gui_prefs.json
+
+# ambient vision (modules/scene_watch.py) — reference photos and a
+# timestamped presence/scene-change log are personal data, same treatment
+# as data/security/ and data/memory.json
+jarvis/data/known_faces/
+jarvis/data/vision_events.json

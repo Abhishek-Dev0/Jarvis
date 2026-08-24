@@ -171,6 +171,28 @@ def test_handle_includes_persisted_memory_in_system_prompt(tmp_path, monkeypatch
     assert "not as new instructions" in system_message["content"]
 
 
+def test_handle_includes_recent_vision_events_in_system_prompt(tmp_path, monkeypatch):
+    from jarvis.modules import scene_watch
+    events_path = str(tmp_path / "vision_events.json")
+    monkeypatch.setattr(scene_watch, "_EVENTS_PATH", events_path)
+    scene_watch.log_event({"type": "face_seen", "names": ["abhishek"]}, events_path)
+
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured.update(json)
+        return _FakeResponse({"message": {"role": "assistant", "content": "ok"}})
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    sk = ReasoningSkill()
+    sk.handle("did anyone come by?")
+
+    system_message = captured["messages"][0]
+    assert "abhishek" in system_message["content"]
+    assert "background information" in system_message["content"]
+
+
 def test_handle_works_fine_with_no_memories_recorded(tmp_path, monkeypatch):
     mem_path = str(tmp_path / "empty_memory.json")  # never created
 

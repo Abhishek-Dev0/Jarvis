@@ -67,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = app.exec()
     if scanner is not None:
         scanner.stop()
+    for skill in j.registry.skills:
+        if skill.name == "scene_watch":
+            skill.enabled = False  # releases the camera if it was toggled on
     return exit_code
 
 

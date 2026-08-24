@@ -150,6 +150,16 @@ class ReasoningSkill(SkillModule):
                 system_content = system_content + "\n\n" + extra
         except Exception:
             pass  # memory is a nice-to-have; never block a reply on it
+        try:
+            try:
+                from .scene_watch import vision_context
+            except ImportError:  # pragma: no cover - legacy direct execution
+                from scene_watch import vision_context
+            vctx = vision_context()
+            if vctx:
+                system_content = system_content + "\n\n" + vctx
+        except Exception:
+            pass  # ambient vision is a nice-to-have; never block a reply on it
         if self.summary_ref is not None:
             summary = self.summary_ref()
             if summary:

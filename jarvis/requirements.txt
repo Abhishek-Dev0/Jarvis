@@ -43,3 +43,13 @@ python-docx
 # into an installable .exe (see packaging/)
 pyside6
 pyinstaller
+
+# ambient vision (modules/scene_watch.py) — face presence reuses security.py's
+# insightface/opencv above; scene-change watching is a frozen V-JEPA2 encoder
+# (transformers>=5 has V-JEPA2 support; timm/einops are real transitive needs
+# for its ViT internals, verified by actually loading and running it, not
+# assumed). Auto-skips scene watching without CUDA — see scene_watch.py's
+# _resolve_use_scene_encoder() docstring for the measured reason why.
+transformers>=5.0
+timm
+einops
