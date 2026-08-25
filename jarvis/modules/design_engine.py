@@ -34,8 +34,10 @@ import numpy as np
 
 try:
     from .base import SkillModule
+    from ..paths import user_data_dir
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+    from paths import user_data_dir
 
 DISCLAIMER = (
     "This geometry comes from closed-form textbook engineering formulas "
@@ -44,8 +46,7 @@ DISCLAIMER = (
     "design. Verify before manufacturing or load-bearing use."
 )
 
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DEFAULT_OUTPUT_DIR = os.path.join(_PKG_DIR, "data", "design_engine")
+_DEFAULT_OUTPUT_DIR = user_data_dir("design_engine")
 
 
 # --------------------------------------------------------------- primitives

@@ -12,8 +12,10 @@ from PySide6.QtWidgets import QApplication
 
 try:
     from ..runtime.jarvis import _build_arg_parser, build_jarvis
+    from ..paths import user_data_path
 except ImportError:  # pragma: no cover - legacy direct execution
     from runtime.jarvis import _build_arg_parser, build_jarvis
+    from paths import user_data_path
 
 from .io_adapter import GuiOutput
 from .main_window import MainWindow
@@ -60,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     # io_adapter.py), so it skips register()'s isinstance-based dispatch.
     j.registry.outputs.append(gui_output)
 
-    prefs_path = os.path.join(_PKG_DIR, "data", "gui_prefs.json")
+    prefs_path = user_data_path("gui_prefs.json")
     window = MainWindow(j, gui_output, prefs_path)
     window.show()
 

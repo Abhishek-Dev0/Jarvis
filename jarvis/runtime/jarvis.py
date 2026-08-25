@@ -37,6 +37,7 @@ try:
     from jarvis import security
     from jarvis import self_modify
     from jarvis import telemetry
+    from jarvis.paths import user_data_dir, user_data_path
 except ImportError:  # pragma: no cover - legacy direct execution
     from core.generate import generate, load_for_inference, prepare_prompt
     from modules.base import Registry
@@ -59,6 +60,7 @@ except ImportError:  # pragma: no cover - legacy direct execution
     import security
     import self_modify
     import telemetry
+    from paths import user_data_dir, user_data_path
 
 # Phrases that mean "stop the process." Handled in run() itself (gated by
 # SecurityGate) rather than by input modules swallowing them, so verification
@@ -167,8 +169,7 @@ def _start_session_log() -> str:
     ever runs, avoids it entirely.
     """
     import datetime
-    logs_dir = os.path.join(_PKG_DIR, "data", "logs")
-    os.makedirs(logs_dir, exist_ok=True)
+    logs_dir = user_data_dir("logs")
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     log_path = os.path.join(logs_dir, f"session_{ts}.log")
     log_file = open(log_path, "a", encoding="utf-8", errors="replace")
@@ -710,7 +711,7 @@ def _build_arg_parser():
                          "data/mcp_servers.json, lets the reasoning model call their tools) — "
                          "tool calls are security-gated regardless; this just removes the "
                          "capability entirely")
-    ap.add_argument("--mcp-config", default=os.path.join(_PKG_DIR, "data", "mcp_servers.json"),
+    ap.add_argument("--mcp-config", default=user_data_path("mcp_servers.json"),
                     help="path to the MCP server config (see modules/mcp_client.py for the shape)")
     ap.add_argument("--no-market-analysis", action="store_true",
                     help="disable the backtesting skill (\"backtest AAPL\", \"analyze crypto BTC-USD\") — "
@@ -828,7 +829,7 @@ def build_jarvis(args, register_io: bool = True):
         j.register(ConsoleOutput())
     j.register(CalculatorSkill())
     j.register(WebSearchSkill())
-    j.register(WebGrowthSkill(data_dir=os.path.join(_PKG_DIR, "data", "web")))
+    j.register(WebGrowthSkill(data_dir=user_data_dir("web")))
     if not args.no_os_control:
         j.register(OSControlSkill(security_ref=lambda: j.security, is_admin_ref=lambda: j.is_admin))
     if not args.no_hardware:
@@ -837,7 +838,7 @@ def build_jarvis(args, register_io: bool = True):
     if not args.no_market_analysis:
         j.register(MarketAnalysisSkill())
     if not args.no_design_engine:
-        j.register(DesignEngineSkill(output_dir=os.path.join(_PKG_DIR, "data", "design_engine")))
+        j.register(DesignEngineSkill(output_dir=user_data_dir("design_engine")))
     mcp_skill = None
     if not args.no_mcp:
         mcp_skill = MCPSkill(config_path=args.mcp_config,

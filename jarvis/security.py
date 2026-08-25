@@ -45,8 +45,12 @@ import re
 
 import numpy as np
 
-_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
-_SEC_DIR = os.path.join(_PKG_DIR, "data", "security")
+try:
+    from .paths import user_data_dir
+except ImportError:  # pragma: no cover - legacy direct execution
+    from paths import user_data_dir
+
+_SEC_DIR = user_data_dir("security")
 _PASS_HASH_PATH = os.path.join(_SEC_DIR, "passphrase.hash")
 _SALT_PATH = os.path.join(_SEC_DIR, "passphrase.salt")
 _VOICEPRINT_PATH = os.path.join(_SEC_DIR, "voiceprint.npy")

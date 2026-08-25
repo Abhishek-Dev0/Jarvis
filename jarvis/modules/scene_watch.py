@@ -46,13 +46,14 @@ import numpy as np
 try:
     from .base import SkillModule
     from ..security import get_face_app, FACE_MATCH_THRESHOLD
+    from ..paths import user_data_dir, user_data_path
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
     from security import get_face_app, FACE_MATCH_THRESHOLD
+    from paths import user_data_dir, user_data_path
 
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_KNOWN_FACES_DIR = os.path.join(_PKG_DIR, "data", "known_faces")
-_EVENTS_PATH = os.path.join(_PKG_DIR, "data", "vision_events.json")
+_KNOWN_FACES_DIR = user_data_dir("known_faces")
+_EVENTS_PATH = user_data_path("vision_events.json")
 _EVENTS_CAP = 50  # ambient context, not a full log -- keep it short
 
 _VISION_FRAME_HEADER = (

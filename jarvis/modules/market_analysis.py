@@ -49,11 +49,12 @@ import pandas as pd
 
 try:
     from .base import SkillModule
+    from ..paths import user_data_path
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+    from paths import user_data_path
 
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_WATCHLIST_PATH = os.path.join(_PKG_DIR, "data", "watchlist.json")
+_WATCHLIST_PATH = user_data_path("watchlist.json")
 
 DISCLAIMER = (
     "This is a backtest on historical data using a simple, published strategy "

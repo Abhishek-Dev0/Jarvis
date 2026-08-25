@@ -53,16 +53,18 @@ from datetime import datetime, timezone
 try:
     from .modules.base import SkillModule
     from .security import authorize_action
+    from .paths import user_data_dir
 except ImportError:  # pragma: no cover - legacy direct execution
     from modules.base import SkillModule
     from security import authorize_action
+    from paths import user_data_dir
 
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_PKG_DIR)
-_LOGS_DIR = os.path.join(_PKG_DIR, "data", "logs")
+_LOGS_DIR = user_data_dir("logs")
 _ISSUES_LOG = os.path.join(_LOGS_DIR, "issues.jsonl")
 _ADDRESSED_PATH = os.path.join(_LOGS_DIR, "self_modify_addressed.json")
-_PROPOSALS_DIR = os.path.join(_PKG_DIR, "data", "self_modify", "proposals")
+_PROPOSALS_DIR = user_data_dir("self_modify", "proposals")
 
 # Repo-relative paths a generated patch may never target. A self-modify
 # system that could edit the file gating its own merges, or the pipeline

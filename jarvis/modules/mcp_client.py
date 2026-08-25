@@ -54,12 +54,13 @@ import threading
 try:
     from .base import SkillModule
     from ..security import authorize_action
+    from ..paths import user_data_path
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
     from security import authorize_action
+    from paths import user_data_path
 
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DEFAULT_CONFIG_PATH = os.path.join(_PKG_DIR, "data", "mcp_servers.json")
+_DEFAULT_CONFIG_PATH = user_data_path("mcp_servers.json")
 
 # Shown in the module docstring / README, not executed — the shape
 # data/mcp_servers.json entries should follow.

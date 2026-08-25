@@ -27,12 +27,13 @@ import numpy as np
 
 try:
     from .base import SkillModule
+    from ..paths import user_data_dir, user_data_path
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+    from paths import user_data_dir, user_data_path
 
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DEFAULT_SOURCE_DIR = os.path.join(_PKG_DIR, "data", "web")
-_DEFAULT_INDEX_PATH = os.path.join(_PKG_DIR, "data", "search_index.json")
+_DEFAULT_SOURCE_DIR = user_data_dir("web")
+_DEFAULT_INDEX_PATH = user_data_path("search_index.json")
 _INDEX_CACHE: dict[str, tuple[int, list[dict], np.ndarray]] = {}
 
 

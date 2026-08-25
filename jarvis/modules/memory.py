@@ -28,11 +28,12 @@ from datetime import datetime, timezone
 
 try:
     from .base import SkillModule
+    from ..paths import user_data_path
 except ImportError:  # pragma: no cover - legacy direct execution
     from base import SkillModule
+    from paths import user_data_path
 
-_PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DEFAULT_PATH = os.path.join(_PKG_DIR, "data", "memory.json")
+_DEFAULT_PATH = user_data_path("memory.json")
 
 _MEMORY_FRAME_HEADER = (
     "The following are facts you were previously told to remember, across "
