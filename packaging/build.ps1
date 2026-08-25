@@ -9,6 +9,26 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+# jarvis/data/models/ (Piper + Kokoro TTS weights, ~490MB) is gitignored --
+# too large to commit to git history. It's hosted instead as a GitHub
+# Release asset (tag "assets-tts-v1", not a "v*" app-version tag, so it
+# never triggers release.yml). A dev machine that already has the weights
+# on disk (the normal case) skips this entirely; only a fresh checkout
+# (CI) needs to fetch them. Requires `gh` authenticated (CI's built-in
+# GITHUB_TOKEN covers this; see release.yml).
+$modelsDir = Join-Path $repoRoot "jarvis\data\models"
+$havePiper = Test-Path (Join-Path $modelsDir "piper") -PathType Container
+$haveKokoro = Test-Path (Join-Path $modelsDir "kokoro") -PathType Container
+if (-not ($havePiper -and $haveKokoro)) {
+    Write-Host "== Voice model weights missing locally -- fetching from release asset =="
+    $zipPath = Join-Path $repoRoot "jarvis-voice-models.zip"
+    gh release download assets-tts-v1 --repo Abhishek-Dev0/Jarvis --pattern "*.zip" --dir $repoRoot --clobber
+    if ($LASTEXITCODE -ne 0) { throw "Failed to download voice model weights (exit $LASTEXITCODE)" }
+    New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
+    Expand-Archive -Path $zipPath -DestinationPath $modelsDir -Force
+    Remove-Item $zipPath
+}
+
 Write-Host "== Building with PyInstaller (--onedir) =="
 pyinstaller (Join-Path $repoRoot "packaging\jarvis_gui.spec") --noconfirm `
     --distpath (Join-Path $repoRoot "dist") --workpath (Join-Path $repoRoot "build")
