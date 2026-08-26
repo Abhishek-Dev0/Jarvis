@@ -25,12 +25,17 @@ yfinance
 scikit-image
 
 # voice I/O + translation (modules/voice.py, modules/translate.py) — optional at
-# import time (each module degrades gracefully if missing) but required for --voice
+# import time (each module degrades gracefully if missing) but required for --voice.
+# sounddevice specifically: real bug found in the packaged app -- it's imported
+# directly by voice.py/health.py for mic capture but was never listed here, so
+# a fresh CI build silently shipped without it ("No module named 'sounddevice'"
+# at runtime) even though local dev environments had it already installed.
 faster-whisper
 kokoro-onnx
 piper-tts
 speechbrain
 argostranslate
+sounddevice
 
 # faster-whisper's backend (ctranslate2) needs CUDA 12's cublas/cudnn even
 # though torch here is a cu118 build with its own bundled (older) cublas --

@@ -24,6 +24,21 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
+          # Real bug found on a live machine: without this, `pip install -r
+          # requirements.txt` alone resolves the plain CPU-only torch wheel,
+          # so every CI-built installer shipped with torch.cuda.is_available()
+          # permanently False regardless of the end user's actual GPU -- which
+          # cascaded into hardware.py's recommend_reasoning_model() picking an
+          # oversized model sized for a RAM budget instead of a VRAM budget.
+          # A CUDA-enabled wheel still runs correctly (falls back to CPU) on a
+          # machine with no GPU, so there's no downside to always installing
+          # this build; only an upside for anyone with an NVIDIA card. cu124
+          # has broad, stable wheel coverage for Python 3.11 (this job's
+          # version). Installing torch+torchvision together from the same
+          # index lets pip's resolver pick a matched pair -- installing them
+          # separately with pinned versions caused a real torchvision/torch
+          # ABI mismatch earlier this session (torchvision::nms not found).
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
           pip install -r jarvis/requirements.txt
 
       - name: Install Inno Setup
